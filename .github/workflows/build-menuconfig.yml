@@ -11,7 +11,6 @@ env:
   CONFIG_FILE: .config
   DIY_P1_SH: diy-part1.sh
   DIY_P2_SH: diy-part2.sh
-  UPLOAD_FIRMWARE: true
   TZ: Asia/Shanghai
 
 jobs:
@@ -19,10 +18,16 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-    - name: Checkout
+    # ---------------------------------------------------------
+    # 【步骤 1】拉取当前仓库代码
+    # ---------------------------------------------------------
+    - name: 1. Checkout Repository
       uses: actions/checkout@v4
 
-    - name: Initialization environment
+    # ---------------------------------------------------------
+    # 【步骤 2】初始化编译环境、安装 Linux 必备依赖包
+    # ---------------------------------------------------------
+    - name: 2. Initialization Environment
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
@@ -35,33 +40,63 @@ jobs:
         sudo mkdir -p /workdir
         sudo chown $USER:$USER /workdir
 
-    - name: Clone source code
+    # ---------------------------------------------------------
+    # 【步骤 3】获取当前 GitHub Actions 服务器的硬件与系统配置信息
+    # ---------------------------------------------------------
+    - name: 3. Get Server Configuration Info
+      run: |
+        echo "========= 💻 服务器 CPU 信息 ========="
+        cat /proc/cpuinfo | grep name | cut -f2 -d: | uniq
+        echo "核心数: $(nproc)"
+        echo "========= 🧠 服务器内存信息 ========="
+        free -h
+        echo "========= 💽 服务器磁盘空间 ========="
+        df -h
+        echo "========= 🌐 服务器网络环境 ========="
+        curl -s https://ipinfo.io/json || true
+
+    # ---------------------------------------------------------
+    # 【步骤 4】下载 OpenWrt 25.12.4 官方核心源码
+    # ---------------------------------------------------------
+    - name: 4. Clone Source Code
       working-directory: /workdir
       run: |
         git clone --depth 1 -b $REPO_BRANCH $REPO_URL openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
-    - name: Load custom feeds
+    # ---------------------------------------------------------
+    # 【步骤 5】加载自定义订阅源 (运行 diy-part1.sh 注入 PassWall/OpenClash/Argon)
+    # ---------------------------------------------------------
+    - name: 5. Load Custom Feeds
       run: |
         [ -e $FEEDS_CONF ] && cp $FEEDS_CONF openwrt/feeds.conf.default
         chmod +x $DIY_P1_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P1_SH
 
-    - name: Update & Install feeds
+    # ---------------------------------------------------------
+    # 【步骤 6】更新并安装所有 Feeds 软件源依赖
+    # ---------------------------------------------------------
+    - name: 6. Update & Install Feeds
       run: |
         cd openwrt
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-    - name: Load custom configuration
+    # ---------------------------------------------------------
+    # 【步骤 7】加载自定义的精简 .config 配置文件并运行 diy-part2.sh
+    # ---------------------------------------------------------
+    - name: 7. Load Custom Configuration
       run: |
         [ -e $CONFIG_FILE ] && cp $CONFIG_FILE openwrt/.config
         chmod +x $DIY_P2_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
 
-    - name: Download package
+    # ---------------------------------------------------------
+    # 【步骤 8】预下载编译所需的底层软件包（多线程并发加速）
+    # ---------------------------------------------------------
+    - name: 8. Download Package
       id: package
       run: |
         cd openwrt
@@ -70,15 +105,22 @@ jobs:
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
-    - name: Compile the firmware
+    # ---------------------------------------------------------
+    # 【步骤 9】开始编译固件 (多线程跑，失败自动切单线程抓报错)
+    # ---------------------------------------------------------
+    - name: 9. Compile The Firmware
       id: compile
       run: |
         cd openwrt
-        echo -e "$(nproc) thread compile"
+        echo -e "$(nproc) 线程并发编译中..."
         make -j$(nproc) || make -j1 || make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
+        echo "FILE_DATE=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_ENV
 
-    - name: Organize files
+    # ---------------------------------------------------------
+    # 【步骤 10】整理固件输出文件，提取编译好的镜像
+    # ---------------------------------------------------------
+    - name: 10. Organize Files
       id: organize
       if: steps.compile.outputs.status == 'success' && !cancelled()
       run: |
@@ -87,9 +129,47 @@ jobs:
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
 
-    - name: Upload firmware directory
+    # ---------------------------------------------------------
+    # 【步骤 11】将固件作为 Artifacts 临时存档到当前工作流
+    # ---------------------------------------------------------
+    - name: 11. Upload Firmware to Artifacts
       uses: actions/upload-artifact@v4
       if: steps.organize.outputs.status == 'success' && !cancelled()
       with:
-        name: OpenWrt_25.12.4_J1900_Firmware
+        name: OpenWrt_25.12.4_J1900_${{ env.FILE_DATE }}
         path: ${{ env.FIRMWARE }}
+
+    # ---------------------------------------------------------
+    # 【步骤 12】发布固件到 GitHub Releases 页面（永久保存，方便下载）
+    # ---------------------------------------------------------
+    - name: 12. Upload Firmware to GitHub Release
+      uses: softprops/action-gh-release@v2
+      if: steps.organize.outputs.status == 'success' && !cancelled()
+      with:
+        tag_name: OpenWrt_J1900_${{ env.FILE_DATE }}
+        name: OpenWrt 25.12.4 J1900 毕业精简版 [${{ env.FILE_DATE }}]
+        body: |
+          ### 🚀 J1900 专属极致精简毕业版固件
+          - **核心源码**: OpenWrt 25.12.4 官方稳定版
+          - **内置插件**: PassWall, OpenClash, UPnP, TurboACC
+          - **主题皮肤**: 默认自带高颜值 Argon 主题
+          - **容量大小**: 256MB 引导分区 + 2048MB(2GB) 根目录空间
+        files: ${{ env.FIRMWARE }}/*
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    # ---------------------------------------------------------
+    # 【步骤 13】发送电报 (Telegram) 机器人编译结果通知
+    # ---------------------------------------------------------
+    - name: 13. Telegram Notification
+      uses: appleboy/telegram-action@master
+      if: always()
+      with:
+        to: ${{ secrets.TELEGRAM_CHAT_ID }}
+        token: ${{ secrets.TELEGRAM_TOKEN }}
+        message: |
+          标题：OpenWrt J1900 固件编译报告
+          状态：${{ steps.compile.outputs.status == 'success' && '🎉 编译成功！' || '❌ 编译失败。' }}
+          时间：${{ env.FILE_DATE }}
+          源码版本：OpenWrt ${{ env.REPO_BRANCH }}
+          下载地址：https://github.com/${{ github.repository }}/releases
