@@ -63,12 +63,12 @@ jobs:
         curl -s https://ipinfo.io/json || true
 
     # ---------------------------------------------------------
-    # 【步骤 4】下载核心源码
+    # 【步骤 4】下载核心源码 (修正：移除 --depth 1 确保完整克隆标签代码)
     # ---------------------------------------------------------
     - name: 4. 拷贝 OpenWrt 25.12.4 官方源码
       working-directory: /workdir
       run: |
-        git clone --depth 1 -b $REPO_BRANCH $REPO_URL openwrt
+        git clone -b $REPO_BRANCH $REPO_URL openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
     # ---------------------------------------------------------
