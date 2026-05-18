@@ -9,13 +9,18 @@
 # Description: OpenWrt DIY script part 1 (Before Update feeds)
 #
 
-# 1. 最新的 Openwrt-Passwall 官方群组源
+# 1. 清理可能残留的旧源（防报错）
+sed -i '/passwall/d' feeds.conf.default
+sed -i '/openclash/d' feeds.conf.default
+
+# 2. 最新的 Openwrt-Passwall 官方群组源（每日同步，目前最稳）
 echo 'src-git passwall_packages https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git;main' >>feeds.conf.default
 echo 'src-git passwall https://github.com/Openwrt-Passwall/openwrt-passwall.git;main' >>feeds.conf.default
 
-# 2. 保持 OpenClash 官方源码仓库
+# 3. 保持 OpenClash 官方源码仓库
 echo 'src-git openclash https://github.com/vernesong/OpenClash.git;master' >>feeds.conf.default
 
-# 3. 添加高颜值 Argon 主题及其设置插件源码
-git clone -b 18.06 https://github.com/jerrykuku/luci-theme-argon.git package/downloads/luci-theme-argon
-git clone https://github.com/jerrykuku/luci-app-argon-config.git package/downloads/luci-app-argon-config
+# 4. 安全添加高颜值 Argon 主题及其设置插件源码（移至标准路径并防冲突）
+rm -rf package/feeds/luci/luci-theme-argon
+git clone -b 18.06 https://github.com/jerrykuku/luci-theme-argon.git package/luci-theme-argon
+git clone https://github.com/jerrykuku/luci-app-argon-config.git package/luci-app-argon-config
