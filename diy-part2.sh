@@ -23,4 +23,9 @@ sed -i 's/iptables/iptables-nft/g' feeds/luci/modules/luci-base/root/usr/share/r
 rm -rf feeds/luci/themes/luci-theme-argon
 rm -rf feeds/luci/applications/luci-app-argon-config
 
+# 5. 修复官方最新主分支 libteflon 的循环依赖死锁 Bug（已修正为 feeds 原始路径）
+if [ -f "feeds/packages/libs/libteflon/Makefile" ]; then
+    sed -i 's/DEPENDS:=.*/DEPENDS:=+libstdcpp +libglog/' feeds/packages/libs/libteflon/Makefile
+fi
+
 echo "diy-part2.sh 执行完毕！"
