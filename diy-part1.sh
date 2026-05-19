@@ -20,11 +20,7 @@ echo 'src-git passwall https://github.com/Openwrt-Passwall/openwrt-passwall.git;
 # 3. 保持 OpenClash 官方源码仓库
 echo 'src-git openclash https://github.com/vernesong/OpenClash.git;master' >>feeds.conf.default
 
-# 4. 安全添加高颜值 Argon 主题（适配全新 LuCI Master 架构）
-# 彻底清理所有旧分支残留，防止编译出 ipk 冲突
-rm -rf package/feeds/luci/luci-theme-argon
-rm -rf package/luci-theme-argon
-rm -rf package/luci-app-argon-config
-
-# 不带 -b 参数，直接克隆最新 Master 主分支（原生支持 uCode / APK 格式）
-git clone https://github.com/jerrykuku/luci-theme-argon.git package/luci-theme-argon
+# 4. 【核心修复】安全注入最新 Master 架构 Argon 主题
+# 直接克隆到自定义目录 custom/themes 下，这样归类更清晰，且绝不会与 package 根目录发生结构冲突
+rm -rf package/custom/luci-theme-argon
+git clone https://github.com/jerrykuku/luci-theme-argon.git package/custom/luci-theme-argon
