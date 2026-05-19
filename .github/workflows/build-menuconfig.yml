@@ -93,13 +93,15 @@ jobs:
         make -j$(nproc) || make -j1 || make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
 
-    - name: 10. 提取与提取打包好的编译产物
+    - name: 10. 提取与提取打包好的编译产物 (精准提取防报错)
       id: organize
       if: steps.compile.outputs.status == 'success' && !cancelled()
       run: |
-        cd openwrt/bin/targets/*/*
-        rm -rf packages
-        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+        # 创建一个干净的临时固件收集目录
+        mkdir -p $GITHUB_WORKSPACE/firmware
+        # 无论新版路径怎么变，精准定向拷贝镜像文件（.img.gz、.vmdk、.qcow2等）
+        find openwrt/bin/targets/ -type f \( -name "*.img.gz" -o -name "*.vmdk" -o -name "*.qcow2" -o -name "*.manifest" \) -exec cp {} $GITHUB_WORKSPACE/firmware/ \;
+        echo "FIRMWARE=$GITHUB_WORKSPACE/firmware" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: 11. 上传临时固件包到 Artifacts 存储
@@ -116,18 +118,18 @@ jobs:
         tag_name: OpenWrt_Latest_${{ env.FILE_DATE }}
         name: OpenWrt 最新滚动开发版 毕业精简版 [${{ env.FILE_DATE }}]
         body: |
-          ### 🚀 极致精简毕业版固件（最新源码版）
+          ### 🚀 极致精简毕业版固件（2026 最新源码 APK 架构）
           - **核心源码**: OpenWrt Main 最新主分支（滚动更新）
           - **内置插件**: PassWall, OpenClash, UPnP, TurboACC
-          - **语言支持**: 默认集成原生简体中文
-          - **主题皮肤**: 默认自带高颜值 Argon 主题
-          - **容量大小**: 256MB 引导分区 + 2048MB(2GB) 根目录空间
+          - **语言支持**: 默认集成原生简体中文 (`zh_Hans`)
+          - **主题皮肤**: 默认自带高颜值 Argon 主题 (适配 uCode 新版)
+          - **区域定制**: 256MB 引导分区 + 2048MB(2GB) 根目录空间
         files: ${{ env.FIRMWARE }}/*
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     - name: 13. 推送编译状态通知到你的 Telegram 机器人
-      uses: appleboy/telegram-action@master
+      uses: appleboy/telegram-action@v1.0.0
       if: always()
       with:
         to: ${{ secrets.TELEGRAM_CHAT_ID }}
