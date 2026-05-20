@@ -1,3 +1,6 @@
+#!/bin/bash
+#
+# Copyright (c) 2019-2026 P3TERX <https://p3terx.com>
 #
 # This is free software, licensed under the MIT License.
 # See /LICENSE for more information.
@@ -7,9 +10,9 @@
 #
 
 # =========================================================
-# 1. 修改默认管理 IP (修正为官方 100% 正确的物理路径)
+# 1. 精准修改默认管理 IP (只替换指定行，绝不使用全局替换误伤掩码)
 # =========================================================
-sed -i 's/192.168.1.1/10.1.1.1/g' package/base-files/files/bin/config_generate
+sed -i 's/lan) ipad=${ipaddr:-"192.168.1.1"}/lan) ipad=${ipaddr:-"10.1.1.1"}/g' package/base-files/files/bin/config_generate
 
 # =========================================================
 # 2. 修复 OpenWrt 官方源码防火墙架构升级造成的额外依赖缺失
@@ -40,14 +43,15 @@ rm -rf package/feeds/passwall_packages/shadowsocksr-libev
 sed -i '/uci set openclash.config.enable=1/d' package/feeds/*/luci-app-openclash/root/etc/uci-defaults/luci-openclash 2>/dev/null || true
 
 # =====================================================================
-# 7. 终极压轴：创建 99-custom-settings 自定义开机脚本 (集设定、主题、解锁于一体)
+# 7. 终极压轴：创建 99-custom-settings 自定义开机脚本 (显式双锁死 IP 与 24位掩码)
 # =====================================================================
 mkdir -p package/base-files/files/etc/uci-defaults
 cat << 'EOF' > package/base-files/files/etc/uci-defaults/99-custom-settings
 #!/bin/sh
 
-# 📌 A. 强行将 LAN 口 IP 锁死在 10.1.1.1，拒绝任何漂移
+# 📌 A. 显式锁死 LAN 口 IP 为 10.1.1.1，并强制下发 255.255.255.0 标准子网掩码（彻底终结 /32 惨剧）
 uci set network.lan.ipaddr='10.1.1.1'
+uci set network.lan.netmask='255.255.255.0'
 uci commit network
 
 # 📌 B. 强行将 Argon 修改为默认主题 (完美适配新版 uCode 架构)
@@ -65,4 +69,4 @@ EOF
 # 极其重要：赋予该合并后的开机脚本物理可执行权限
 chmod +x package/base-files/files/etc/uci-defaults/99-custom-settings
 
-echo "diy-part2.sh 全部优化补丁注入完毕！"
+echo "diy-part2.sh 掩码修复及优化补丁全部注入完毕！"
