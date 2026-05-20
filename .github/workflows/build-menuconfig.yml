@@ -3,6 +3,8 @@ name: 编译 OpenWrt 最新版固件
 on:
   repository_dispatch:
   workflow_dispatch:
+  schedule:
+    - cron: '0 16 * * *'  # 每天 UTC 16:00 运行，换算后即北京时间凌晨 00:00（会由于排队延迟 10-30 分钟）
 
 env:
   REPO_URL: https://github.com/openwrt/openwrt
@@ -189,7 +191,7 @@ jobs:
       if: always()
       with:
         to: ${{ secrets.TELEGRAM_CHAT_ID }}
-        token: ${{ secrets.TELEGRAM_TOKEN }}
+        token: ${{ secrets.TELEGRAM_TOKEN }}        # 👈 遵照吩咐，完全保留原样未作改动
         message: |
           报告主题：OpenWrt 最新版固件编译通知
           编译结果：${{ steps.compile.outputs.status == 'success' && '🎉 编译成功！' || '❌ 编译失败。' }}
