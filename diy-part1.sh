@@ -7,20 +7,113 @@
 #
 # File name: diy-part1.sh
 # Description: OpenWrt DIY script part 1 (Before Update feeds)
-#
 
 # 1. 清理可能残留的旧源（防报错）
 sed -i '/passwall/d' feeds.conf.default
 sed -i '/openclash/d' feeds.conf.default
 
-# 2. 最新的 Openwrt-Passwall 官方群组源（每日同步，目前最稳）
-echo 'src-git passwall_packages https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git;main' >>feeds.conf.default
-echo 'src-git passwall https://github.com/Openwrt-Passwall/openwrt-passwall.git;main' >>feeds.conf.default
+# 2. 添加最新的 PassWall 官方源
+echo 'src-git passwall_packages https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git;main' >> feeds.conf.default
+echo 'src-git passwall https://github.com/Openwrt-Passwall/openwrt-passwall.git;main' >> feeds.conf.default
 
-# 3. 保持 OpenClash 官方源码仓库
-echo 'src-git openclash https://github.com/vernesong/OpenClash.git;master' >>feeds.conf.default
+# 3. 添加 OpenClash 官方源
+echo 'src-git openclash https://github.com/vernesong/OpenClash.git;master' >> feeds.conf.default
 
-# 4. 【核心修复】安全注入最新 Master 架构 Argon 主题
-# 直接克隆到自定义目录 custom/themes 下，这样归类更清晰，且绝不会与 package 根目录发生结构冲突
+# 4. 安全注入最新 Argon 主题
 rm -rf package/custom/luci-theme-argon
+mkdir -p package/custom
 git clone https://github.com/jerrykuku/luci-theme-argon.git package/custom/luci-theme-argon
+
+# ====================== 新增：sing-box 预处理 ======================
+# 在 feeds 更新前先准备好 sing-box 的自定义 Makefile（防止被 feeds 覆盖）
+echo "=== 准备自定义 sing-box Makefile ==="
+mkdir -p package/custom/sing-box
+cat > package/custom/sing-box/Makefile << 'EOF'
+include $(TOPDIR)/rules.mk
+
+PKG_NAME:=sing-box
+PKG_VERSION:=1.13.5
+PKG_RELEASE:=1
+
+PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
+PKG_SOURCE_URL:=https://codeload.github.com/SagerNet/sing-box/tar.gz/v$(PKG_VERSION)?
+PKG_HASH:=skip
+
+PKG_LICENSE:=GPL-3.0-or-later
+PKG_LICENSE_FILES:=LICENSE
+PKG_MAINTAINER:=Van Waholtz <brvphoenix@gmail.com>
+
+PKG_BUILD_DEPENDS:=golang/host
+PKG_BUILD_PARALLEL:=1
+PKG_BUILD_FLAGS:=no-mips16
+
+GO_PKG:=github.com/sagernet/sing-box
+GO_PKG_BUILD_PKG:=$(GO_PKG)/cmd/sing-box
+
+GO_PKG_LDFLAGS_X:=$(GO_PKG)/constant.Version=$(PKG_VERSION)
+
+include $(INCLUDE_DIR)/package.mk
+include ../../lang/golang/golang-package.mk
+
+define Package/sing-box-default
+  TITLE:=The universal proxy platform
+  SECTION:=net
+  CATEGORY:=Network
+  URL:=https://sing-box.sagernet.org
+  DEPENDS:=$(GO_ARCH_DEPENDS) +ca-bundle +kmod-inet-diag +kmod-tun
+  USERID:=sing-box=5566:sing-box=5566
+endef
+
+define Package/sing-box
+  $(Package/sing-box-default)
+  TITLE+= (full)
+  VARIANT:=full
+  DEFAULT_VARIANT:=1
+endef
+
+define Package/sing-box/description
+  Sing-box is a universal proxy platform which supports hysteria, SOCKS, Shadowsocks,
+  ShadowTLS, Tor, trojan, VLess, VMess, WireGuard and so on.
+endef
+
+define Package/sing-box-tiny
+  $(Package/sing-box-default)
+  TITLE+= (tiny)
+  PROVIDES:=sing-box
+  VARIANT:=tiny
+  CONFLICTS:=sing-box
+endef
+
+Package/sing-box-tiny/description:=$(Package/sing-box/description)
+
+define Package/sing-box/config
+	menu "Select build options"
+		depends on PACKAGE_sing-box
+		config SINGBOX_WITH_TAILSCALE
+			bool "Build with Tailscale support"
+			default y
+	endmenu
+endef
+
+PKG_CONFIG_DEPENDS:=CONFIG_SINGBOX_WITH_TAILSCALE
+
+ifeq ($(BUILD_VARIANT),tiny)
+  GO_PKG_TAGS:=with_quic,with_utls,with_clash_api
+else
+  GO_PKG_TAGS:=$(subst $(space),$(comma),$(strip \
+	with_tailscale with_quic with_utls with_clash_api with_gvisor with_wireguard \
+  ))
+endif
+
+define Package/sing-box/install
+	$(INSTALL_DIR) $(1)/usr/bin
+	$(INSTALL_BIN) $(GO_PKG_BUILD_BIN_DIR)/sing-box $(1)/usr/bin/sing-box
+endef
+
+Package/sing-box-tiny/install:=$(Package/sing-box/install)
+
+$(eval $(call BuildPackage,sing-box))
+$(eval $(call BuildPackage,sing-box-tiny))
+EOF
+
+echo "sing-box 自定义 Makefile 已准备完成（版本 1.13.5 + Tailscale 修复）"
