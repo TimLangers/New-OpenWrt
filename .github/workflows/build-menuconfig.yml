@@ -41,7 +41,7 @@ jobs:
         DEBIAN_FRONTEND: noninteractive
       run: |
         sudo rm -rf /etc/apt/sources.list.d/*
-        # 彻底蒸发虚拟机自带的 30GB+ 大型垃圾文件，腾出纯净的磁盘 I/O 读写速度
+        # 彻底清理 30GB+ 无用开发组件，释放磁盘读写吞吐
         sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/powershell /usr/share/swift
         sudo -E apt-get -qq update
         sudo -E apt-get -qq install -y build-essential clang flex bison g++ gawk gcc-multilib g++-multilib gettext git libncurses-dev libssl-dev python3-distutils rsync unzip zlib1g-dev file qemu-utils upx-ucl fastjar libelf-dev swig python3-setuptools python3-pyelftools zstd jq libssl-dev libcap-dev binutils-dev
@@ -52,15 +52,21 @@ jobs:
         sudo chown $USER:$USER /workdir
 
     # ---------------------------------------------------------
-    # 4. 创建 6GB Swap 虚拟内存 (防止高级全协议内核编译时 OOM 爆内存崩溃)
+    # 4. 创建 6GB Swap 虚拟内存 (完美破除 Text file busy 核心逻辑)
     # ---------------------------------------------------------
     - name: 2.1 创建 6GB Swap 虚拟内存
       run: |
-        echo "========= 开始划定并创建虚拟内存 Swap ========="
+        echo "========= 智能检测并强制关闭已存在的旧 Swap ========="
+        # 如果缓存中带有了旧的激活 swapfile，这里强行关闭它，防止 fallocate 报 Text file busy
+        sudo swapoff -a || true
+        sudo rm -f /swapfile || true
+
+        echo "========= 开始划定并重新创建虚拟内存 Swap ========="
         sudo fallocate -l 6G /swapfile
         sudo chmod 600 /swapfile
         sudo mkswap /swapfile
         sudo swapon /swapfile
+
         echo "========= 当前虚拟内存分配状态 ========="
         free -h
         echo "========= Swap 物理挂载详情 ========="
@@ -91,7 +97,7 @@ jobs:
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
     # ---------------------------------------------------------
-    # 7. GitHub Cache 智能全局缓存 (第二次编译 15 分钟速通的终极外挂)
+    # 7. GitHub Cache 智能全局缓存 (15分钟速通的核心)
     # ---------------------------------------------------------
     - name: ⚡ 启用编译缓存机制 (Actions Cache)
       uses: actions/cache@v4
@@ -134,7 +140,7 @@ jobs:
         $GITHUB_WORKSPACE/$DIY_P2_SH
 
     # ---------------------------------------------------------
-    # 11. 下载依赖 (16线程极限拉取，断流重试)
+    # 11. 下载依赖
     # ---------------------------------------------------------
     - name: 8. 下载编译依赖
       id: package
@@ -146,13 +152,13 @@ jobs:
         find dl -size -1024c -exec rm -f {} \;
 
     # ---------------------------------------------------------
-    # 12. 编译固件 (智能多线程：顺风极速多线程，逆风自动单线程 V=s 打印错误)
+    # 12. 编译固件 (智能两阶段：首发全核暴击，翻车自动单线程 V=s 打印)
     # ---------------------------------------------------------
     - name: 9. 开始稳定编译固件
       id: compile
       run: |
         cd openwrt
-        echo "启动智能爆发编译。若顺风顺水将全核拉满；若触发报错，将自动原地降级单线程（-j1 V=s）精准暴漏错误日志。"
+        echo "优先启动多线程极速编译。如遭遇突发报错，将自动原地降级单线程（make -j1 V=s）抓取核心错误日志。"
         make -j$(nproc) || make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
 
@@ -164,7 +170,6 @@ jobs:
       if: steps.compile.outputs.status == 'success' && !cancelled()
       run: |
         mkdir -p $GITHUB_WORKSPACE/firmware
-        # 精准搜索提取 J1900 刚需镜像格式： img.gz 镜像、VMware 的 vmdk、PVE的 qcow2
         find openwrt/bin/targets/ -type f \( -name "*.img.gz" -o -name "*.vmdk" -o -name "*.qcow2" -o -name "*.manifest" \) -exec cp {} $GITHUB_WORKSPACE/firmware/ \;
         echo "FIRMWARE=$GITHUB_WORKSPACE/firmware" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
@@ -182,25 +187,25 @@ jobs:
     # ---------------------------------------------------------
     # 15. 发布 Release
     # ---------------------------------------------------------
-    - name: 12. 发布 GitHub Release (白嫖无限空间发布页)
+    - name: 12. 发布 GitHub Release
       uses: softprops/action-gh-release@v2
       if: steps.organize.outputs.status == 'success' && !cancelled()
       with:
         tag_name: OpenWrt_Latest_${{ env.FILE_DATE }}
         name: OpenWrt 最新滚动开发版 [${{ env.FILE_DATE }}]
         body: |
-          ### 🚀 OpenWrt Main 2026 最新版毕业固件（x86_64）
-          - **核心源码**：OpenWrt Main 最新主线（滚动更新）
-          - **内置核心**：PassWall / OpenClash / TurboACC
-          - **默认主题**：Argon 高颜值定制皮肤
-          - **默认语言**：简体中文 (多维无冲突集成)
-          - **全协议增强**：已原生适配 sing-box full / TUIC / Hysteria 2 / Reality 编译链
+          ### 🚀 OpenWrt Main 最新精简毕业版
+          - **核心源码**：OpenWrt Main 最新主线（滚动更新，适配最新 APK 架构）
+          - **科学增强**：集成 PassWall / OpenClash 核心插件
+          - **网络加速**：内置 UPnP 与 TurboACC 网络加速
+          - **高颜值皮**：默认 Argon 适配新版 uCode 主题
+          - **原生集成**：简体中文 (`zh_Hans`) 原生注入
         files: ${{ env.FIRMWARE }}/*
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     # ---------------------------------------------------------
-    # 16. Telegram 通知 (全自动远程电报通报)
+    # 16. Telegram 通知
     # ---------------------------------------------------------
     - name: 13. Telegram 编译通知
       uses: appleboy/telegram-action@v1.0.0
@@ -209,9 +214,9 @@ jobs:
         to: ${{ secrets.TELEGRAM_CHAT_ID }}
         token: ${{ secrets.TELEGRAM_TOKEN }}
         message: |
-          OpenWrt 固件最新编译速报
+          OpenWrt 编译通知
           
-          📦 编译结果：${{ steps.compile.outputs.status == 'success' && '🎉 编译成功！固件已发布。' || '❌ 编译失败。请前往网页端排查日志。' }}
-          ⏰ 结束时间：${{ env.FILE_DATE }}
-          🌿 源码分支：${{ env.REPO_BRANCH }}
-          🔗 固件下载：https://github.com/${{ github.repository }}/releases
+          编译结果：${{ steps.compile.outputs.status == 'success' && '🎉 编译成功' || '❌ 编译失败' }}
+          编译时间：${{ env.FILE_DATE }}
+          源码分支：${{ env.REPO_BRANCH }}
+          固件下载：https://github.com/${{ github.repository }}/releases
