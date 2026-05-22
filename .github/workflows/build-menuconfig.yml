@@ -1,7 +1,8 @@
 name: 编译 OpenWrt 最新版固件
+
 on:
-  repository_dispatch:
   workflow_dispatch:
+  repository_dispatch:
   schedule:
     - cron: '0 16 * * *'
 
@@ -18,23 +19,14 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-    # ---------------------------------------------------------
-    # 1. 拉取当前仓库
-    # ---------------------------------------------------------
     - name: 1. 拉取当前源码仓库
       uses: actions/checkout@v4
 
-    # ---------------------------------------------------------
-    # 2. 生成时间变量
-    # ---------------------------------------------------------
     - name: 准备编译时间标记
       run: |
         echo "FILE_DATE=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_ENV
 
-    # ---------------------------------------------------------
-    # 3. 清理磁盘并安装依赖
-    # ---------------------------------------------------------
-    - name: 2. 清理磁盘空间并安装 Linux 编译依赖
+    - name: 2. 清理磁盘并安装依赖
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
@@ -48,10 +40,7 @@ jobs:
         sudo mkdir -p /workdir
         sudo chown $USER:$USER /workdir
 
-    # ---------------------------------------------------------
-    # 4. 创建 Swap
-    # ---------------------------------------------------------
-    - name: 2.1 创建 6GB Swap 虚拟内存
+    - name: 2.1 创建 6GB Swap
       run: |
         sudo swapoff -a || true
         sudo rm -f /swapfile || true
@@ -60,29 +49,13 @@ jobs:
         sudo mkswap /swapfile
         sudo swapon /swapfile
 
-    # ---------------------------------------------------------
-    # 5. 查看服务器信息
-    # ---------------------------------------------------------
-    - name: 3. 收集编译服务器信息
-      run: |
-        echo "CPU 型号: $(cat /proc/cpuinfo | grep name | cut -f2 -d: | uniq)"
-        echo "可用核心数: $(nproc)"
-        free -h
-        df -h
-
-    # ---------------------------------------------------------
-    # 6. 拉取 OpenWrt
-    # ---------------------------------------------------------
     - name: 4. 拉取 OpenWrt 主线源码
       working-directory: /workdir
       run: |
         git clone --depth 1 -b $REPO_BRANCH $REPO_URL openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
-    # ---------------------------------------------------------
-    # 7. GitHub Cache
-    # ---------------------------------------------------------
-    - name: ⚡ 启用编译缓存机制
+    - name: ⚡ 启用编译缓存
       uses: actions/cache@v4
       with:
         path: |
@@ -93,9 +66,6 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-openwrt-main-
 
-    # ---------------------------------------------------------
-    # 8. 执行 diy-part1.sh
-    # ---------------------------------------------------------
     - name: 5. 执行 diy-part1.sh
       run: |
         [ -e $FEEDS_CONF ] && cp $FEEDS_CONF openwrt/feeds.conf.default
@@ -103,111 +73,12 @@ jobs:
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P1_SH
 
-    # ---------------------------------------------------------
-    # 9. 更新 feeds
-    # ---------------------------------------------------------
-    - name: 6. 更新并安装 Feeds
+    - name: 6. 更新 Feeds
       run: |
         cd openwrt
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-    # ---------------------------------------------------------
-    # 9.1 修复 sing-box（关键修复步骤）
-    # ---------------------------------------------------------
-    - name: 6.1 修复 sing-box Tailscale 编译错误（升级至 1.13.5）
-      run: |
-        cat > openwrt/feeds/packages/net/sing-box/Makefile << 'EOF'
-include $(TOPDIR)/rules.mk
-
-PKG_NAME:=sing-box
-PKG_VERSION:=1.13.5
-PKG_RELEASE:=1
-
-PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
-PKG_SOURCE_URL:=https://codeload.github.com/SagerNet/sing-box/tar.gz/v$(PKG_VERSION)?
-PKG_HASH:=skip
-
-PKG_LICENSE:=GPL-3.0-or-later
-PKG_LICENSE_FILES:=LICENSE
-PKG_MAINTAINER:=Van Waholtz <brvphoenix@gmail.com>
-
-PKG_BUILD_DEPENDS:=golang/host
-PKG_BUILD_PARALLEL:=1
-PKG_BUILD_FLAGS:=no-mips16
-
-GO_PKG:=github.com/sagernet/sing-box
-GO_PKG_BUILD_PKG:=$(GO_PKG)/cmd/sing-box
-
-GO_PKG_LDFLAGS_X:=$(GO_PKG)/constant.Version=$(PKG_VERSION)
-
-include $(INCLUDE_DIR)/package.mk
-include ../../lang/golang/golang-package.mk
-
-define Package/sing-box-default
-  TITLE:=The universal proxy platform
-  SECTION:=net
-  CATEGORY:=Network
-  URL:=https://sing-box.sagernet.org
-  DEPENDS:=$(GO_ARCH_DEPENDS) +ca-bundle +kmod-inet-diag +kmod-tun
-  USERID:=sing-box=5566:sing-box=5566
-endef
-
-define Package/sing-box
-  $(Package/sing-box-default)
-  TITLE+= (full)
-  VARIANT:=full
-  DEFAULT_VARIANT:=1
-endef
-
-define Package/sing-box/description
-  Sing-box is a universal proxy platform which supports hysteria, SOCKS, Shadowsocks,
-  ShadowTLS, Tor, trojan, VLess, VMess, WireGuard and so on.
-endef
-
-define Package/sing-box-tiny
-  $(Package/sing-box-default)
-  TITLE+= (tiny)
-  PROVIDES:=sing-box
-  VARIANT:=tiny
-  CONFLICTS:=sing-box
-endef
-
-Package/sing-box-tiny/description:=$(Package/sing-box/description)
-
-define Package/sing-box/config
-	menu "Select build options"
-		depends on PACKAGE_sing-box
-		config SINGBOX_WITH_TAILSCALE
-			bool "Build with Tailscale support"
-			default y
-	endmenu
-endef
-
-PKG_CONFIG_DEPENDS:=CONFIG_SINGBOX_WITH_TAILSCALE
-
-ifeq ($(BUILD_VARIANT),tiny)
-  GO_PKG_TAGS:=with_quic,with_utls,with_clash_api
-else
-  GO_PKG_TAGS:=$(subst $(space),$(comma),$(strip \
-	with_tailscale with_quic with_utls with_clash_api with_gvisor with_wireguard \
-  ))
-endif
-
-define Package/sing-box/install
-	$(INSTALL_DIR) $(1)/usr/bin
-	$(INSTALL_BIN) $(GO_PKG_BUILD_BIN_DIR)/sing-box $(1)/usr/bin/sing-box
-endef
-
-Package/sing-box-tiny/install:=$(Package/sing-box/install)
-
-$(eval $(call BuildPackage,sing-box))
-$(eval $(call BuildPackage,sing-box-tiny))
-EOF
-
-    # ---------------------------------------------------------
-    # 10. 执行 diy-part2.sh 并加载配置
-    # ---------------------------------------------------------
     - name: 7. 执行 diy-part2.sh 并加载配置
       run: |
         [ -e $CONFIG_FILE ] && cp $CONFIG_FILE openwrt/.config
@@ -215,71 +86,62 @@ EOF
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
 
-    # ---------------------------------------------------------
-    # 11. 下载依赖
-    # ---------------------------------------------------------
-    - name: 8. 下载编译依赖
+    - name: 8. 下载依赖
       run: |
         cd openwrt
         make defconfig
         make download -j16 V=s || make download -j8 V=s
 
-    # ---------------------------------------------------------
-    # 12. 开始编译
-    # ---------------------------------------------------------
-    - name: 9. 开始稳定编译固件
+    - name: 9. 开始编译
       run: |
         cd openwrt
         make -j$(nproc) || make -j1 V=s
 
-    # ---------------------------------------------------------
-    # 13. 整理固件
-    # ---------------------------------------------------------
-    - name: 10. 整理编译产物
+    - name: 10. 整理固件
       run: |
         mkdir -p $GITHUB_WORKSPACE/firmware
         find openwrt/bin/targets/ -type f \( -name "*.img.gz" -o -name "*.vmdk" -o -name "*.qcow2" -o -name "*.manifest" \) -exec cp {} $GITHUB_WORKSPACE/firmware/ \;
         echo "FIRMWARE=$GITHUB_WORKSPACE/firmware" >> $GITHUB_ENV
 
-    # ---------------------------------------------------------
-    # 14. 上传 Artifact
-    # ---------------------------------------------------------
-    - name: 11. 上传临时固件
-      uses: actions/upload-artifact@v4
-      with:
-        name: OpenWrt_Latest_${{ env.FILE_DATE }}
-        path: ${{ env.FIRMWARE }}
-
-    # ---------------------------------------------------------
-    # 15. 发布 Release
-    # ---------------------------------------------------------
-    - name: 12. 发布 GitHub Release
-      uses: softprops/action-gh-release@v2
-      if: success()
-      with:
-        tag_name: OpenWrt_Latest_${{ env.FILE_DATE }}
-        name: OpenWrt 最新滚动开发版 [${{ env.FILE_DATE }}]
-        body: |
-          ### 🚀 OpenWrt Main 最新编译版
-          - 源码分支：main
-          - 编译时间：${{ env.FILE_DATE }}
-          - 已修复 sing-box Tailscale 编译问题
-        files: ${{ env.FIRMWARE }}/*
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-    # ---------------------------------------------------------
-    # 16. Telegram 通知
-    # ---------------------------------------------------------
-    - name: 13. Telegram 编译通知
+    # ==================== Telegram 通知（已优化）====================
+    - name: 11. Telegram 编译通知
       uses: appleboy/telegram-action@v1.0.0
       if: always()
       with:
         to: ${{ secrets.TELEGRAM_CHAT_ID }}
         token: ${{ secrets.TELEGRAM_TOKEN }}
         message: |
-          OpenWrt 编译通知
-          
-          编译结果：${{ success() && '🎉 编译成功' || '❌ 编译失败' }}
-          编译时间：${{ env.FILE_DATE }}
-          源码分支：${{ env.REPO_BRANCH }}
+          🚀 *OpenWrt 编译通知*
+
+          *状态*：${{ success() && '✅ 编译成功' || '❌ 编译失败' }}
+          *时间*：${{ env.FILE_DATE }}
+          *分支*：${{ env.REPO_BRANCH }}
+          *耗时*：${{ steps.compile_duration.outputs.time || '未知' }} 
+
+          ${{ success() && '🎉 固件已打包完成！' || '⚠️ 请查看 Actions 日志排查错误' }}
+        disable_web_page_preview: true
+      env:
+        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+    - name: 12. 上传 Artifact
+      uses: actions/upload-artifact@v4
+      if: success()
+      with:
+        name: OpenWrt_Latest_${{ env.FILE_DATE }}
+        path: ${{ env.FIRMWARE }}
+
+    - name: 13. 发布 Release
+      uses: softprops/action-gh-release@v2
+      if: success()
+      with:
+        tag_name: OpenWrt_Latest_${{ env.FILE_DATE }}
+        name: OpenWrt 最新版 [${{ env.FILE_DATE }}]
+        body: |
+          ### OpenWrt Main 最新编译版
+          - sing-box 1.13.5（Tailscale 已修复）
+          - Argon 最新主题
+          - 默认 IP：10.1.1.1/24
+        files: ${{ env.FIRMWARE }}/*
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
