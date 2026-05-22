@@ -73,6 +73,9 @@ uci commit luci
 rm -f /var/run/fw4.lock
 rm -f /var/run/luci-reload.lock
 rm -f /var/run/config.lock
+# 强制清理 sing-box 缓存
+rm -rf build_dir/target-x86_64_musl/sing-box-*
+rm -rf staging_dir/target-x86_64_musl/root-x86_64/usr/bin/sing-box
 
 echo "自定义设置应用完成！"
 exit 0
