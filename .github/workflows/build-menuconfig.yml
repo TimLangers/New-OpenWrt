@@ -49,6 +49,13 @@ jobs:
         sudo mkswap /swapfile
         sudo swapon /swapfile
 
+    - name: 3. 收集服务器信息
+      run: |
+        echo "CPU: $(cat /proc/cpuinfo | grep name | cut -f2 -d: | uniq)"
+        echo "核心数: $(nproc)"
+        free -h
+        df -h
+
     - name: 4. 拉取 OpenWrt 主线源码
       working-directory: /workdir
       run: |
@@ -73,7 +80,7 @@ jobs:
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P1_SH
 
-    - name: 6. 更新 Feeds
+    - name: 6. 更新并安装 Feeds
       run: |
         cd openwrt
         ./scripts/feeds update -a
@@ -86,13 +93,13 @@ jobs:
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
 
-    - name: 8. 下载依赖
+    - name: 8. 下载编译依赖
       run: |
         cd openwrt
         make defconfig
         make download -j16 V=s || make download -j8 V=s
 
-    - name: 9. 开始编译
+    - name: 9. 开始编译固件
       run: |
         cd openwrt
         make -j$(nproc) || make -j1 V=s
@@ -103,7 +110,7 @@ jobs:
         find openwrt/bin/targets/ -type f \( -name "*.img.gz" -o -name "*.vmdk" -o -name "*.qcow2" -o -name "*.manifest" \) -exec cp {} $GITHUB_WORKSPACE/firmware/ \;
         echo "FIRMWARE=$GITHUB_WORKSPACE/firmware" >> $GITHUB_ENV
 
-    # ==================== Telegram 通知（已优化）====================
+    # ==================== Telegram 通知 ====================
     - name: 11. Telegram 编译通知
       uses: appleboy/telegram-action@v1.0.0
       if: always()
@@ -113,16 +120,12 @@ jobs:
         message: |
           🚀 *OpenWrt 编译通知*
 
-          *状态*：${{ success() && '✅ 编译成功' || '❌ 编译失败' }}
+          *状态*：${{ job.status == 'success' && '✅ 编译成功' || '❌ 编译失败' }}
           *时间*：${{ env.FILE_DATE }}
-          *分支*：${{ env.REPO_BRANCH }}
-          *耗时*：${{ steps.compile_duration.outputs.time || '未知' }} 
+          *分支*：main
 
-          ${{ success() && '🎉 固件已打包完成！' || '⚠️ 请查看 Actions 日志排查错误' }}
+          ${{ job.status == 'success' && '🎉 固件已打包完成！' || '⚠️ 请查看 Actions 日志排查错误' }}
         disable_web_page_preview: true
-      env:
-        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
     - name: 12. 上传 Artifact
       uses: actions/upload-artifact@v4
@@ -131,7 +134,7 @@ jobs:
         name: OpenWrt_Latest_${{ env.FILE_DATE }}
         path: ${{ env.FIRMWARE }}
 
-    - name: 13. 发布 Release
+    - name: 13. 发布 GitHub Release
       uses: softprops/action-gh-release@v2
       if: success()
       with:
