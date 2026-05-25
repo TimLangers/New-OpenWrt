@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   repository_dispatch:
   schedule:
-    - cron: '0 16 * * *'
+    - cron: '0 16 * * *'   # UTC 16:00 = 北京时间次日 00:00（凌晨0点）
 
 env:
   REPO_URL: https://github.com/openwrt/openwrt
@@ -91,11 +91,12 @@ jobs:
         echo "OpenWrt 源码拉取完成"
 
     # -----------------------------------------------------------------
-    - name: ⚡ 启用 DL 目录编译缓存
+    - name: ⚡ 启用 DL 目录编译缓存（使用 hashFiles 控制缓存更新）
       uses: actions/cache@v4
       with:
         path: openwrt/dl
-        key: ${{ runner.os }}-openwrt-dl-${{ github.run_id }}
+        # 根据关键配置文件的变化生成缓存 key，避免每次运行都写入新缓存
+        key: ${{ runner.os }}-openwrt-dl-${{ hashFiles('feeds.conf.default', '.config', 'diy-part1.sh') }}
         restore-keys: |
           ${{ runner.os }}-openwrt-dl-
 
