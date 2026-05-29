@@ -71,7 +71,7 @@ jobs:
     - name: 3️⃣ 收集服务器信息
       run: |
         echo "==================== 服务器配置信息 ===================="
-        echo "CPU 型号: $(cat /proc/cpuinfo | grep 'model name' | head -1 | cut -f2 -d: | sed 's/^[ \t]*//')"
+        echo "CPU 型型: $(cat /proc/cpuinfo | grep 'model name' | head -1 | cut -f2 -d: | sed 's/^[ \t]*//')"
         echo "CPU 核心数: $(nproc)"
         echo "==================== 内存信息 ===================="
         free -h
@@ -196,7 +196,7 @@ jobs:
       if: always()
       env:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_TO }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: |
         # 1. 抓取准确的编译状态
