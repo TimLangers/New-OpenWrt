@@ -199,12 +199,14 @@ jobs:
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_TO }}
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: |
-        if [ "${{ job.status }}" == "success" ]; then
+        # 1. 抓取准确的编译状态
+        if [ "${{ job.status }}" = "success" ]; then
           STATUS="✅ 编译成功"
         else
           STATUS="❌ 编译失败"
         fi
 
+        # 2. 从 .config 提取设备型号
         if [ -f openwrt/.config ]; then
           DEVICE=$(grep '^CONFIG_TARGET.*DEVICE.*=y' openwrt/.config | sed -r 's/.*DEVICE_(.*)=y/\1/')
           [ -z "$DEVICE" ] && DEVICE="未知设备"
@@ -212,25 +214,34 @@ jobs:
           DEVICE="未知设备"
         fi
 
+        # 3. 构造 Release 页面链接（确保 FILE_DATE 存在）
+        FILE_DATE="${{ env.FILE_DATE }}"
         RELEASE_URL=""
-        if [ "${{ job.status }}" == "success" ]; then
-          RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/OpenWrt_${{ env.FILE_DATE }}"
+        if [ "${{ job.status }}" = "success" ] && [ -n "$FILE_DATE" ]; then
+          RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/OpenWrt_${FILE_DATE}"
         fi
 
-        MESSAGE="📢 *OpenWrt 自动编译通知*
-        ⏰ 时间：$(date '+%Y-%m-%d %H:%M:%S')
-        🔧 状态：${STATUS}
-        📟 设备：${DEVICE}
-        📦 仓库：${{ github.repository }}
-        🔗 运行链接：${RUN_URL}"
-
+        # 4. 改用纯文本拼接（不带特殊解析模式，确保含有各类下划线、斜杠时绝对不会报 400 错误）
+        MSG="📢 OpenWrt 自动编译通知\n"
+        MSG="${MSG}⏰ 时间：$(date '+%Y-%m-%d %H:%M:%S')\n"
+        MSG="${MSG}🔧 状态：${STATUS}\n"
+        MSG="${MSG}📟 设备：${DEVICE}\n"
+        MSG="${MSG}📦 仓库：${{ github.repository }}\n"
+        MSG="${MSG}🔗 运行链接：${RUN_URL}"
         if [ -n "$RELEASE_URL" ]; then
-          MESSAGE="${MESSAGE}
-        📥 发布页面：${RELEASE_URL}"
+          MSG="${MSG}\n📥 发布页面：${RELEASE_URL}"
         fi
 
-        curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-          -d chat_id="${TELEGRAM_CHAT_ID}" \
-          -d text="${MESSAGE}" \
-          -d parse_mode="Markdown" \
-          -d disable_web_page_preview="true"
+        # 5. 调用 jq 将白文本转义并打包成安全的标准 JSON，彻底解决格式与换行问题
+        JSON_PAYLOAD=$(jq -n \
+          --arg chat_id "${TELEGRAM_CHAT_ID}" \
+          --arg text "$MSG" \
+          --argjson preview false \
+          '{chat_id: $chat_id, text: $text, disable_web_page_preview: $preview}')
+
+        # 6. 使用 application/json 格式发送 POST 请求，并把 API 的回执打印在控制台
+        RESPONSE=$(curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+          -H "Content-Type: application/json" \
+          -d "$JSON_PAYLOAD")
+
+        echo "TG API Response: $RESPONSE"
