@@ -71,12 +71,54 @@ jobs:
     - name: 3️⃣ 收集服务器信息
       run: |
         echo "==================== 服务器配置信息 ===================="
-        echo "CPU 型型: $(cat /proc/cpuinfo | grep 'model name' | head -1 | cut -f2 -d: | sed 's/^[ \t]*//')"
-        echo "CPU 核心数: $(nproc)"
+        CPU_MODEL=$(cat /proc/cpuinfo | grep 'model name' | head -1 | cut -f2 -d: | sed 's/^[ \t]*//')
+        CPU_CORES=$(nproc)
+        echo "CPU 型号: $CPU_MODEL"
+        echo "CPU 核心数: $CPU_CORES"
         echo "==================== 内存信息 ===================="
         free -h
         echo "==================== 磁盘信息 ===================="
         df -h
+        
+        # 将服务器信息录入全局环境，供开始通知使用
+        echo "CPU_MODEL=$CPU_MODEL" >> $GITHUB_ENV
+        echo "CPU_CORES=$CPU_CORES" >> $GITHUB_ENV
+
+    - name: 🚀 发送编译开始通知 (Telegram)
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: |
+        read -r -d '' MSG << 'EOF' || true
+        🚀 *OpenWrt 自动编译开始* 🚀
+
+        📅 *时间*：$(date '+%Y-%m-%d %H:%M:%S')
+        🖥️ *编译服务器信息*：
+          • CPU：${{ env.CPU_MODEL }}
+          • 核心数：${{ env.CPU_CORES }}
+          • 磁盘使用：$(df -h / | awk 'NR==2 {print $4}') 可用
+
+        📦 *配置文件*：${{ env.CONFIG_FILE }}
+        🔧 *源码分支*：${{ env.REPO_BRANCH }}
+        🌿 *项目仓库*：${{ github.repository }}
+
+        编译进行中，请耐心等待\.\.\.
+        EOF
+
+        JSON_PAYLOAD=$(jq -n \
+          --arg chat_id "${TELEGRAM_CHAT_ID}" \
+          --arg text "$MSG" \
+          --argjson preview false \
+          '{
+            chat_id: $chat_id, 
+            text: $text, 
+            parse_mode: "MarkdownV2", 
+            disable_web_page_preview: $preview
+          }')
+
+        curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+          -H "Content-Type: application/json" \
+          -d "$JSON_PAYLOAD"
 
     - name: 4️⃣ 拉取 OpenWrt main 分支源码
       working-directory: /workdir
@@ -183,12 +225,12 @@ jobs:
           - **默认密码**: (无密码)
 
           📦 **下载方式**:
-          点击上方 Assets 下载固件文件
+          - 点击上方 Assets 下载固件文件
 
           ⚠️ **使用注意**:
-          1. 首次刷入建议先备份当前配置
-          2. 重要文件建议在刷入前导出
-          3. 如遇启动问题，可进恢复模式重置
+          - 1. 首次刷入建议先备份当前配置
+          - 2. 重要文件建议在刷入前导出
+          - 3. 如遇启动问题，可进恢复模式重置
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -199,47 +241,61 @@ jobs:
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: |
-        # 1. 抓取准确的编译状态
-        if [ "${{ job.status }}" = "success" ]; then
-          STATUS="✅ 编译成功"
-        else
-          STATUS="❌ 编译失败"
-        fi
-
-        # 2. 从 .config 提取设备型号
+        # 1. 从 .config 提取设备型号
         if [ -f openwrt/.config ]; then
           DEVICE=$(grep '^CONFIG_TARGET.*DEVICE.*=y' openwrt/.config | sed -r 's/.*DEVICE_(.*)=y/\1/')
           [ -z "$DEVICE" ] && DEVICE="未知设备"
         else
           DEVICE="未知设备"
         fi
+        
+        # 安全转义设备名称中的下划线或特殊字符
+        DEVICE=$(echo "$DEVICE" | sed 's/_/\\_/g' | sed 's/-/\\-/g' | sed 's/\./\\./g')
 
-        # 3. 构造 Release 页面链接（确保 FILE_DATE 存在）
-        FILE_DATE="${{ env.FILE_DATE }}"
-        RELEASE_URL=""
-        if [ "${{ job.status }}" = "success" ] && [ -n "$FILE_DATE" ]; then
+        # 2. 根据状态进行分支通知组装
+        if [ "${{ job.status }}" = "success" ]; then
+          FILE_DATE="${{ env.FILE_DATE }}"
           RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/OpenWrt_${FILE_DATE}"
+          
+          read -r -d '' MSG << EOF || true
+        ✅ *OpenWrt 自动编译成功！* ✅
+
+        📅 *完成时间*：$(date '+%Y-%m-%d %H:%M:%S')
+        📟 *目标设备*：${DEVICE}
+        📦 *项目仓库*：${{ github.repository }}
+        🌐 *管理地址*：10\.1\.1\.1
+        🔑 *默认密码*：无
+
+        🔗 [点击直达下载发布页面](${RELEASE_URL})
+        ⚠️ [点击查看详细编译日志](${RUN_URL})
+        EOF
+
+        else
+          read -r -d '' MSG << EOF || true
+        ❌ *OpenWrt 自动编译失败！* ❌
+
+        📅 *失败时间*：$(date '+%Y-%m-%d %H:%M:%S')
+        📟 *目标设备*：${DEVICE}
+        📦 *项目仓库*：${{ github.repository }}
+        🔧 *失败分支*：${{ env.REPO_BRANCH }}
+
+        ⚠️ [点击此处紧急查看错误日志](${RUN_URL})
+        EOF
         fi
 
-        # 4. 改用纯文本拼接（不带特殊解析模式，确保含有各类下划线、斜杠时绝对不会报 400 错误）
-        MSG="📢 OpenWrt 自动编译通知\n"
-        MSG="${MSG}⏰ 时间：$(date '+%Y-%m-%d %H:%M:%S')\n"
-        MSG="${MSG}🔧 状态：${STATUS}\n"
-        MSG="${MSG}📟 设备：${DEVICE}\n"
-        MSG="${MSG}📦 仓库：${{ github.repository }}\n"
-        MSG="${MSG}🔗 运行链接：${RUN_URL}"
-        if [ -n "$RELEASE_URL" ]; then
-          MSG="${MSG}\n📥 发布页面：${RELEASE_URL}"
-        fi
-
-        # 5. 调用 jq 将白文本转义并打包成安全的标准 JSON，彻底解决格式与换行问题
+        # 3. 用 jq 转换为安全的标准 JSON 并加上高级解析
         JSON_PAYLOAD=$(jq -n \
           --arg chat_id "${TELEGRAM_CHAT_ID}" \
           --arg text "$MSG" \
           --argjson preview false \
-          '{chat_id: $chat_id, text: $text, disable_web_page_preview: $preview}')
+          '{
+            chat_id: $chat_id, 
+            text: $text, 
+            parse_mode: "MarkdownV2", 
+            disable_web_page_preview: $preview
+          }')
 
-        # 6. 使用 application/json 格式发送 POST 请求，并把 API 的回执打印在控制台
+        # 4. 发送网络请求并打印控制台
         RESPONSE=$(curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
           -H "Content-Type: application/json" \
           -d "$JSON_PAYLOAD")
