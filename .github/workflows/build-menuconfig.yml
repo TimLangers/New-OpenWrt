@@ -76,7 +76,6 @@ jobs:
 
     - name: 发送编译开始通知（含服务器信息）
       run: |
-        # 抛弃所有多行文本拼接，直接用 \n 换行，语法格式100%符合标准，消灭一切波纹线
         MSG=$(printf "🚀 <b>OpenWrt 编译开始</b> 🚀\n\n📅 <b>时间</b>：%s\n🖥️ <b>编译服务器信息</b>：\n• CPU：%s\n• 物理数量：%s\n• 核心数：%s\n• 内存：%s\n• 磁盘使用：%s 可用\n\n📦 <b>配置文件</b>：%s\n🔧 <b>源码分支</b>：%s\n\n编译进行中，请稍候..." "$(date '+%Y-%m-%d %H:%M:%S')" "${{ env.CPU_MODEL }}" "${{ env.CPU_PHYSICAL }}" "${{ env.CPU_CORES }}" "${{ env.MEM_INFO }}" "$(df -h / | awk 'NR==2 {print $4}')" "${{ env.CONFIG_FILE }}" "${{ env.REPO_BRANCH }}")
 
         JSON_PAYLOAD=$(jq -n \
@@ -134,9 +133,16 @@ jobs:
       id: compile
       run: |
         cd openwrt
-        echo -e "$(nproc) 线程编译中..."
-        make -j$(nproc) || make -j1 || make -j1 V=s
+        # 提前把 FILE_DATE 写入环境，防止后面失败时通知读取不到
         echo "FILE_DATE=$(date +%Y%m%d%H%M)" >> $GITHUB_ENV
+        
+        echo -e "$(nproc) 线程快速编译中..."
+        # 尝试快速多线程编译
+        if ! make -j$(nproc); then
+          echo "⚠️ 多线程编译失败，正在尝试单线程 V=s 捕获核心错误..."
+          # 如果多线程失败，直接用单线程且带最详细输出的模式跑，这样报错一定会顶在日志最末尾
+          make -j1 V=s
+        fi
 
     - name: 发送编译结果通知 (Telegram)
       if: always()
