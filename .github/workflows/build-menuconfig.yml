@@ -1,18 +1,19 @@
-name: 编译 OpenWrt 最新版固件
+name: OpenWrt-合集版
 
-on:
+on: 
   workflow_dispatch:
-  repository_dispatch:
   schedule:
-    - cron: '0 16 * * *'   # UTC 16:00 = 北京时间次日 00:00（凌晨0点）
+    - cron: 20 00 * * *
 
 env:
-  REPO_URL: https://github.com/openwrt/openwrt
-  REPO_BRANCH: main
+  REPO_URL: https://github.com/openwrt/openwrt.git
+  REPO_BRANCH: openwrt-25.12
   FEEDS_CONF: feeds.conf.default
-  CONFIG_FILE: .config
-  DIY_P1_SH: diy-part1.sh
-  DIY_P2_SH: diy-part2.sh
+  CONFIG_FILE: OK2.config
+  DIY_P1_SH: DIY-1.sh
+  DIY_P2_SH: DIY-2.sh
+  UPLOAD_FIRMWARE: true
+  UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
 
 jobs:
@@ -20,284 +21,95 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-    - name: 1️⃣ 拉取当前源码仓库
-      uses: actions/checkout@v4
+    - name: 检查项目分支
+      uses: actions/checkout@main
 
-    - name: ⏰ 准备编译时间标记
+    - name: 清理磁盘空间
+      uses: jlumbroso/free-disk-space@main
+      with:
+        tool-cache: true        
+        android: true
+        dotnet: true
+        haskell: true
+        large-packages: true
+        swap-storage: true
+      
+    - name: 查看机器配置（同时保存为环境变量）
+      id: machine_info
       run: |
-        echo "FILE_DATE=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_ENV
+        echo "警告⚠"
+        echo "分配的服务器性能有限，若选择的插件过多，务必注意CPU性能！"
+        echo -e "CPU性能排序: 7763 > 8370C > 8272CL > 8171M > E5-2673\n"
+        echo "--------------------------CPU信息--------------------------"
+        CPU_PHYSICAL=$(cat /proc/cpuinfo | grep "physical id" | sort | uniq | wc -l)
+        CPU_CORES=$(nproc)
+        CPU_MODEL=$(cat /proc/cpuinfo | grep -m1 name | awk -F: '{print $2}' | sed 's/^[ \t]*//')
+        echo "CPU物理数量: $CPU_PHYSICAL"
+        echo "CPU核心数量: $CPU_CORES"
+        echo -e "CPU型号信息:$CPU_MODEL\n"
+        echo "--------------------------内存信息--------------------------"
+        MEM_INFO=$(sudo lshw -short -C memory | grep GiB | head -1 | sed 's/^[ \t]*//')
+        echo "已安装内存详细信息:"
+        echo -e "$MEM_INFO\n"
+        echo "--------------------------硬盘信息--------------------------"
+        DISK_COUNT=$(ls /dev/sd* | grep -v [1-9] | wc -l)
+        DISK_USAGE=$(df -hT)
+        echo "硬盘数量: $DISK_COUNT" && echo "$DISK_USAGE"
+        echo "CPU_PHYSICAL=$CPU_PHYSICAL" >> $GITHUB_ENV
+        echo "CPU_CORES=$CPU_CORES" >> $GITHUB_ENV
+        echo "CPU_MODEL=$CPU_MODEL" >> $GITHUB_ENV
+        echo "MEM_INFO=$MEM_INFO" >> $GITHUB_ENV
 
-    - name: 2️⃣ 清理磁盘并安装依赖
+    - name: 安装编译环境
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
-        sudo rm -rf /etc/apt/sources.list.d/*
-        sudo rm -rf /usr/share/dotnet
-        sudo rm -rf /usr/local/lib/android
-        sudo rm -rf /opt/ghc
-        sudo rm -rf /usr/local/share/powershell
-        sudo rm -rf /usr/share/swift
-
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+        sudo docker image prune --all --force
         sudo -E apt-get -qq update
-
-        sudo -E apt-get -qq install -y \
-          build-essential clang flex bison g++ gawk gcc-multilib \
-          g++-multilib gettext git libncurses-dev libssl-dev \
-          python3-distutils rsync unzip zlib1g-dev file qemu-utils \
-          upx-ucl fastjar libelf-dev swig python3-setuptools \
-          python3-pyelftools zstd jq libcap-dev binutils-dev
-
+        sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev jq
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
-
         sudo timedatectl set-timezone "$TZ"
-
         sudo mkdir -p /workdir
-        sudo chown $USER:$USER /workdir
+        sudo chown $USER:$GROUPS /workdir
 
-    - name: 2️⃣.1️⃣ 创建 6GB Swap 交换分区
-      run: |
-        sudo swapoff -a || true
-        sudo rm -f /swapfile || true
-
-        sudo fallocate -l 6G /swapfile
-        sudo chmod 600 /swapfile
-        sudo mkswap /swapfile
-        sudo swapon /swapfile
-
-        echo "Swap 创建完成，当前状态："
-        free -h
-
-    - name: 3️⃣ 收集服务器信息
-      run: |
-        echo "==================== 服务器配置信息 ===================="
-        CPU_MODEL=$(cat /proc/cpuinfo | grep 'model name' | head -1 | cut -f2 -d: | sed 's/^[ \t]*//')
-        CPU_CORES=$(nproc)
-        echo "CPU 型号: $CPU_MODEL"
-        echo "CPU 核心数: $CPU_CORES"
-        echo "==================== 内存信息 ===================="
-        free -h
-        echo "==================== 磁盘信息 ===================="
-        df -h
-        
-        # 将服务器信息录入全局环境，供开始通知使用
-        echo "CPU_MODEL=$CPU_MODEL" >> $GITHUB_ENV
-        echo "CPU_CORES=$CPU_CORES" >> $GITHUB_ENV
-
-    - name: 🚀 发送编译开始通知 (Telegram)
-      env:
-        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+    - name: 发送编译开始通知（含服务器信息）
       run: |
         read -r -d '' MSG << 'EOF' || true
-        🚀 *OpenWrt 自动编译开始* 🚀
+        🚀 *OpenWrt 编译开始* 🚀
 
         📅 *时间*：$(date '+%Y-%m-%d %H:%M:%S')
         🖥️ *编译服务器信息*：
           • CPU：${{ env.CPU_MODEL }}
+          • 物理数量：${{ env.CPU_PHYSICAL }}
           • 核心数：${{ env.CPU_CORES }}
+          • 内存：${{ env.MEM_INFO }}
           • 磁盘使用：$(df -h / | awk 'NR==2 {print $4}') 可用
 
         📦 *配置文件*：${{ env.CONFIG_FILE }}
         🔧 *源码分支*：${{ env.REPO_BRANCH }}
-        🌿 *项目仓库*：${{ github.repository }}
 
-        编译进行中，请耐心等待\.\.\.
+        编译进行中，请稍候...
         EOF
 
         JSON_PAYLOAD=$(jq -n \
-          --arg chat_id "${TELEGRAM_CHAT_ID}" \
+          --arg chat_id "${{ secrets.TELEGRAM_CHAT_ID }}" \
           --arg text "$MSG" \
           --argjson preview false \
           '{
             chat_id: $chat_id, 
             text: $text, 
-            parse_mode: "MarkdownV2", 
+            parse_mode: "Markdown", 
             disable_web_page_preview: $preview
           }')
 
-        curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+        curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
           -H "Content-Type: application/json" \
           -d "$JSON_PAYLOAD"
 
-    - name: 4️⃣ 拉取 OpenWrt main 分支源码
+    - name: 克隆固件源码
       working-directory: /workdir
       run: |
-        git clone --depth 1 -b $REPO_BRANCH $REPO_URL openwrt
-        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
-        echo "OpenWrt 源码拉取完成"
-
-    - name: ⚡ 启用 DL 目录编译缓存（使用 hashFiles 控制缓存更新）
-      uses: actions/cache@v4
-      with:
-        path: openwrt/dl
-        key: ${{ runner.os }}-openwrt-dl-${{ hashFiles('feeds.conf.default', '.config', 'diy-part1.sh') }}
-        restore-keys: |
-          ${{ runner.os }}-openwrt-dl-
-
-    - name: 5️⃣ 执行 diy-part1.sh (自定义包和调整)
-      run: |
-        [ -e $FEEDS_CONF ] && cp $FEEDS_CONF openwrt/feeds.conf.default
-        chmod +x $DIY_P1_SH
-        cd openwrt
-        $GITHUB_WORKSPACE/$DIY_P1_SH
-
-    - name: 6️⃣ 更新并安装 Feeds
-      run: |
-        cd openwrt
-        ./scripts/feeds update -a
-        ./scripts/feeds install -a
-        echo "Feeds 更新和安装完成"
-
-    - name: 6️⃣.1️⃣ 修复第三方 Golang 包路径
-      run: |
-        cd openwrt
-        find package -name Makefile | xargs sed -i \
-          's#../../lang/golang/#$(TOPDIR)/feeds/packages/lang/golang/#g'
-        echo "Golang 包路径修复完成"
-
-    - name: 7️⃣ 执行 diy-part2.sh (配置和优化)
-      run: |
-        [ -e $CONFIG_FILE ] && cp $CONFIG_FILE openwrt/.config
-        chmod +x $DIY_P2_SH
-        cd openwrt
-        $GITHUB_WORKSPACE/$DIY_P2_SH
-
-    - name: 8️⃣ 生成默认配置并下载编译依赖
-      run: |
-        cd openwrt
-        make defconfig
-        make download -j16 V=s || make download -j8 V=s || make download -j4 V=s
-        echo "编译依赖下载完成"
-
-    - name: 9️⃣ 开始编译固件
-      run: |
-        cd openwrt
-        echo "开始编译，使用 2 个并发线程..."
-        make -j2 V=s || {
-          echo "2 线程编译失败，降级为 1 线程重试..."
-          make -j1 V=s
-        }
-        echo "编译完成！"
-
-    - name: 🔟 整理编译产物固件
-      run: |
-        mkdir -p $GITHUB_WORKSPACE/firmware
-        
-        find openwrt/bin/targets/ -type f \
-        \( -name "*.img.gz" -o -name "*.vmdk" -o -name "*.qcow2" \
-           -o -name "*.manifest" -o -name "*.bin" -o -name "*.squashfs" \) \
-        -exec cp {} $GITHUB_WORKSPACE/firmware/ \;
-        
-        FIRMWARE_COUNT=$(ls -1 $GITHUB_WORKSPACE/firmware/ | wc -l)
-        echo "固件数量: $FIRMWARE_COUNT"
-        echo "FIRMWARE=$GITHUB_WORKSPACE/firmware" >> $GITHUB_ENV
-        ls -lh $GITHUB_WORKSPACE/firmware/
-
-    - name: 1️⃣1️⃣ 上传固件至 Artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: OpenWrt_firmware_${{ env.FILE_DATE }}
-        path: ${{ env.FIRMWARE }}
-        retention-days: 30
-
-    - name: 1️⃣2️⃣ 发布到 GitHub Releases
-      uses: softprops/action-gh-release@v2
-      if: success()
-      with:
-        tag_name: OpenWrt_${{ env.FILE_DATE }}
-        files: ${{ env.FIRMWARE }}/*
-        body: |
-          🚀 **OpenWrt Main 分支固件自动编译**
-
-          📅 **编译时间**: ${{ env.FILE_DATE }}
-          🌿 **编译分支**: main
-          🔥 **集成核心**:
-          - sing-box 1.12.5 (full 版)
-          - Argon 主题 + 配置插件
-          - Tailscale 支持
-          - PassWall + OpenClash 双科学上网
-          - TurboACC 加速
-
-          🌐 **默认配置**:
-          - **LAN IP**: 10.1.1.1/24
-          - **默认用户名**: root
-          - **默认密码**: (无密码)
-
-          📦 **下载方式**:
-          - 点击上方 Assets 下载固件文件
-
-          ⚠️ **使用注意**:
-          - 1. 首次刷入建议先备份当前配置
-          - 2. 重要文件建议在刷入前导出
-          - 3. 如遇启动问题，可进恢复模式重置
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: 1️⃣3️⃣ 发送编译结果通知 (Telegram)
-      if: always()
-      env:
-        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-      run: |
-        # 1. 从 .config 提取设备型号
-        if [ -f openwrt/.config ]; then
-          DEVICE=$(grep '^CONFIG_TARGET.*DEVICE.*=y' openwrt/.config | sed -r 's/.*DEVICE_(.*)=y/\1/')
-          [ -z "$DEVICE" ] && DEVICE="未知设备"
-        else
-          DEVICE="未知设备"
-        fi
-        
-        # 安全转义设备名称中的下划线或特殊字符
-        DEVICE=$(echo "$DEVICE" | sed 's/_/\\_/g' | sed 's/-/\\-/g' | sed 's/\./\\./g')
-
-        # 2. 根据状态进行分支通知组装
-        if [ "${{ job.status }}" = "success" ]; then
-          FILE_DATE="${{ env.FILE_DATE }}"
-          RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/OpenWrt_${FILE_DATE}"
-          
-          read -r -d '' MSG << EOF || true
-        ✅ *OpenWrt 自动编译成功！* ✅
-
-        📅 *完成时间*：$(date '+%Y-%m-%d %H:%M:%S')
-        📟 *目标设备*：${DEVICE}
-        📦 *项目仓库*：${{ github.repository }}
-        🌐 *管理地址*：10\.1\.1\.1
-        🔑 *默认密码*：无
-
-        🔗 [点击直达下载发布页面](${RELEASE_URL})
-        ⚠️ [点击查看详细编译日志](${RUN_URL})
-        EOF
-
-        else
-          read -r -d '' MSG << EOF || true
-        ❌ *OpenWrt 自动编译失败！* ❌
-
-        📅 *失败时间*：$(date '+%Y-%m-%d %H:%M:%S')
-        📟 *目标设备*：${DEVICE}
-        📦 *项目仓库*：${{ github.repository }}
-        🔧 *失败分支*：${{ env.REPO_BRANCH }}
-
-        ⚠️ [点击此处紧急查看错误日志](${RUN_URL})
-        EOF
-        fi
-
-        # 3. 用 jq 转换为安全的标准 JSON 并加上高级解析
-        JSON_PAYLOAD=$(jq -n \
-          --arg chat_id "${TELEGRAM_CHAT_ID}" \
-          --arg text "$MSG" \
-          --argjson preview false \
-          '{
-            chat_id: $chat_id, 
-            text: $text, 
-            parse_mode: "MarkdownV2", 
-            disable_web_page_preview: $preview
-          }')
-
-        # 4. 发送网络请求并打印控制台
-        RESPONSE=$(curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-          -H "Content-Type: application/json" \
-          -d "$JSON_PAYLOAD")
-
-        echo "TG API Response: $RESPONSE"
+        df -hT $PWD
+        git clone $REPO_URL -
