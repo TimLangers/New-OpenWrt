@@ -10,8 +10,8 @@ env:
   REPO_BRANCH: openwrt-25.12
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: OK2.config
-  DIY_P1_SH: DIY-1.sh
-  DIY_P2_SH: DIY-2.sh
+  DIY_P1_SH: diy-part1.sh
+  DIY_P2_SH: diy-part2.sh
   UPLOAD_FIRMWARE: true
   UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
