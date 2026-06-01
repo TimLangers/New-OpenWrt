@@ -3,7 +3,7 @@ name: OpenWrt-合集版
 on: 
   workflow_dispatch:
   schedule:
-    - cron: '20 00 * * *'
+    - cron: '0 16 * * *'          # UTC 16:00 = 北京时间 00:00（次日）
 
 env:
   REPO_URL: https://github.com/openwrt/openwrt.git
