@@ -48,9 +48,8 @@ jobs:
         echo "CPU核心数量: $CPU_CORES"
         echo -e "CPU型号信息:$CPU_MODEL\n"
         echo "--------------------------内存信息--------------------------"
-        MEM_INFO=$(sudo lshw -short -C memory | grep GiB | head -1 | sed 's/^[ \t]*//')
-        echo "已安装内存详细信息:"
-        echo -e "$MEM_INFO\n"
+        MEM_INFO=$(free -h | awk '/^Mem:/ {print $2}')
+        echo "内存总大小: $MEM_INFO"
         echo "--------------------------硬盘信息--------------------------"
         DISK_COUNT=$(ls /dev/sd* | grep -v [1-9] | wc -l)
         DISK_USAGE=$(df -hT)
@@ -89,7 +88,7 @@ jobs:
             disable_web_page_preview: $preview
           }')
 
-        curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+        curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
           -H "Content-Type: application/json" \
           -d "$JSON_PAYLOAD"
 
@@ -133,21 +132,17 @@ jobs:
       id: compile
       run: |
         cd openwrt
-        # 提前把 FILE_DATE 写入环境，防止后面失败时通知读取不到
         echo "FILE_DATE=$(date +%Y%m%d%H%M)" >> $GITHUB_ENV
-        
         echo -e "$(nproc) 线程快速编译中..."
-        # 尝试快速多线程编译
         if ! make -j$(nproc); then
           echo "⚠️ 多线程编译失败，正在尝试单线程 V=s 捕获核心错误..."
-          # 如果多线程失败，直接用单线程且带最详细输出的模式跑，这样报错一定会顶在日志最末尾
           make -j1 V=s
         fi
 
     - name: 发送编译结果通知 (Telegram)
       if: always()
       env:
-        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: |
@@ -182,3 +177,20 @@ jobs:
           -d "$JSON_PAYLOAD")
 
         echo "TG API Response: $RESPONSE"
+
+    - name: 上传固件到 Releases
+      uses: softprops/action-gh-release@v1
+      if: success() && env.UPLOAD_RELEASE == 'true'
+      with:
+        tag_name: OpenWrt_${{ env.FILE_DATE }}
+        name: OpenWrt 自动编译 ${{ env.FILE_DATE }}
+        body: |
+          自动编译完成于 ${{ env.FILE_DATE }}
+          设备配置：${{ env.CONFIG_FILE }}
+          源码分支：${{ env.REPO_BRANCH }}
+        files: |
+          openwrt/bin/targets/**/*.img
+          openwrt/bin/targets/**/*.bin
+          openwrt/bin/targets/**/*.gz
+          openwrt/bin/targets/**/*.tar
+      continue-on-error: true
