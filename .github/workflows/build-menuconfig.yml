@@ -73,9 +73,26 @@ jobs:
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
 
+    # ==================== 编译开始通知（已替换） ====================
     - name: 发送编译开始通知（含服务器信息）
       run: |
-        MSG=$(printf "🚀 <b>OpenWrt 编译开始</b> 🚀\n\n📅 <b>时间</b>：%s\n🖥️ <b>编译服务器信息</b>：\n• CPU：%s\n• 物理数量：%s\n• 核心数：%s\n• 内存：%s\n• 磁盘使用：%s 可用\n\n📦 <b>配置文件</b>：%s\n🔧 <b>源码分支</b>：%s\n\n编译进行中，请稍候..." "$(date '+%Y-%m-%d %H:%M:%S')" "${{ env.CPU_MODEL }}" "${{ env.CPU_PHYSICAL }}" "${{ env.CPU_CORES }}" "${{ env.MEM_INFO }}" "$(df -h / | awk 'NR==2 {print $4}')" "${{ env.CONFIG_FILE }}" "${{ env.REPO_BRANCH }}")
+        read -r -d '' MSG << EOF || true
+        🚀 *OpenWrt 编译开始* 🚀
+
+        📅 *时间*：$(date '+%Y-%m-%d %H:%M:%S')
+        📦 *仓库名称*：${{ github.repository }}
+        🖥️ *编译服务器信息*：
+          • CPU：${{ env.CPU_MODEL }}
+          • 物理数量：${{ env.CPU_PHYSICAL }}
+          • 核心数：${{ env.CPU_CORES }}
+          • 内存：${{ env.MEM_INFO }}
+          • 磁盘使用：$(df -h / | awk 'NR==2 {print $4}') 可用
+
+        📦 *配置文件*：${{ env.CONFIG_FILE }}
+        🔧 *源码分支*：${{ env.REPO_BRANCH }}
+
+        编译进行中，请稍候...
+        EOF
 
         JSON_PAYLOAD=$(jq -n \
           --arg chat_id "${{ secrets.TELEGRAM_CHAT_ID }}" \
@@ -84,13 +101,14 @@ jobs:
           '{
             chat_id: $chat_id, 
             text: $text, 
-            parse_mode: "HTML", 
+            parse_mode: "Markdown", 
             disable_web_page_preview: $preview
           }')
 
         curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
           -H "Content-Type: application/json" \
           -d "$JSON_PAYLOAD"
+    # ================================================================
 
     - name: 克隆固件源码
       working-directory: /workdir
