@@ -27,7 +27,7 @@ jobs:
     - name: 清理磁盘空间
       uses: jlumbroso/free-disk-space@main
       with:
-        tool-cache: true        
+        tool-cache: true       
         android: true
         dotnet: true
         haskell: true
@@ -73,7 +73,7 @@ jobs:
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
 
-    # ==================== 编译开始通知（已替换） ====================
+    # ==================== 编译开始通知 ====================
     - name: 发送编译开始通知（含服务器信息）
       run: |
         read -r -d '' MSG << EOF || true
@@ -105,7 +105,7 @@ jobs:
             disable_web_page_preview: $preview
           }')
 
-        curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
+        curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
           -H "Content-Type: application/json" \
           -d "$JSON_PAYLOAD"
     # ================================================================
@@ -160,7 +160,7 @@ jobs:
     - name: 发送编译结果通知 (Telegram)
       if: always()
       env:
-        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: |
