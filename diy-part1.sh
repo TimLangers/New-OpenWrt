@@ -1,216 +1,54 @@
 #!/bin/bash
-#
-# Copyright (c) 2019-2026 P3TERX <https://p3terx.com>
-#
-# This is free software, licensed under the MIT License.
-# See /LICENSE for more information.
-#
-# File name: diy-part1.sh
-# Description: OpenWrt DIY script part 1 (Before Update feeds)
+# Description: OpenWrt DIY script part 2 (Clean & Optimized)
 
-echo "=================================="
-echo "开始执行 diy-part1.sh"
-echo "=================================="
+set -e
 
-# =====================================================================
-# 【重要】添加自定义 feeds 源（如需要）
-# =====================================================================
-# 如果你有自定义的 feeds 源，在这里添加
-# echo "src-git custom https://github.com/your-username/your-feeds.git" >> feeds.conf.default
+echo "=== 正在执行 DIY 优化脚本 ==="
 
-# =====================================================================
-# sing-box 自定义编译包 (v1.12.5 稳定版)
-# =====================================================================
-echo "=== 正在准备 sing-box 自定义包 (v1.12.5) ==="
+# 1. 强制架构防护：防止第三方包修改 .config 架构
+echo "=== 检查架构配置 ==="
+if grep -q "CONFIG_TARGET_x86_64=y" .config; then
+    echo "✓ 架构检测通过：当前为 x86_64"
+else
+    echo "⚠️ 严重警告：检测到当前架构不是 x86_64！正在强制停止..."
+    exit 1
+fi
 
-# 创建自定义包目录
-mkdir -p package/custom/sing-box
+# 2. **修改 LAN IP (采用全匹配替换，防止 config_generate 格式差异导致失败)**
+**sed -i 's/192.168.1.1/10.1.1.1/g' package/base-files/files/bin/config_generate**
 
-# 创建 Makefile
-cat > package/custom/sing-box/Makefile << 'MAKEFILE_EOF'
-include $(TOPDIR)/rules.mk
+# 3. 修复 Golang 编译路径 (保留原有逻辑)
+find feeds/packages -name "Makefile" -type f | xargs -i sed -i 's#../../lang/golang/#$(TOPDIR)/feeds/packages/lang/golang/#g' {}
 
-PKG_NAME:=sing-box
-PKG_VERSION:=1.12.5
-PKG_RELEASE:=1
+# 4. 优化 sing-box
+if [ -f "package/custom/sing-box/Makefile" ]; then
+    sed -i '/^GO_PKG_LDFLAGS_X/a GO_PKG_VARS:=GOGC=50 CGO_ENABLED=0' package/custom/sing-box/Makefile
+fi
 
-PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
-PKG_SOURCE_URL:=https://codeload.github.com/SagerNet/sing-box/tar.gz/v$(PKG_VERSION)?
-PKG_HASH:=skip
+# 5. 防火墙与 LuCI 修复
+sed -i 's/"iptables"/"iptables-nft"/g' feeds/luci/modules/luci-base/root/usr/share/rpcd/acl.d/luci-base.json 2>/dev/null || true
 
-PKG_LICENSE:=GPL-3.0-or-later
-PKG_MAINTAINER:=SagerNet <https://github.com/SagerNet>
+# 6. 清理可能导致冲突的主题文件
+rm -rf feeds/luci/themes/luci-theme-argon
+rm -rf feeds/luci/applications/luci-app-argon-config
 
-PKG_BUILD_DEPENDS:=golang/host
-PKG_BUILD_PARALLEL:=1
-PKG_BUILD_FLAGS:=no-mips16
+# 7. **使用 uci-defaults 强制锁定系统默认值 (将设置统一放在 99-custom-settings 中)**
+**mkdir -p package/base-files/files/etc/uci-defaults**
+**cat > package/base-files/files/etc/uci-defaults/99-custom-settings << 'EOF'**
+**#!/bin/sh**
+**# 强制设置网络与系统参数**
+**uci set network.lan.ipaddr='10.1.1.1'**
+**uci set network.lan.netmask='255.255.255.0'**
+**uci set system.@system[0].hostname='OpenWrt'**
+**uci set system.@system[0].timezone='CST-8'**
+**uci set system.@system[0].zonename='Asia/Shanghai'**
+**uci commit network**
+**uci commit system**
+**# 确保 Argon 主题生效**
+**uci set luci.main.mediaurlbase='/luci-static/argon'**
+**uci commit luci**
+**exit 0**
+**EOF**
+**chmod +x package/base-files/files/etc/uci-defaults/99-custom-settings**
 
-GO_PKG:=github.com/sagernet/sing-box
-GO_PKG_BUILD_PKG:=$(GO_PKG)/cmd/sing-box
-GO_PKG_LDFLAGS_X:=$(GO_PKG)/constant.Version=$(PKG_VERSION)
-
-# 【修复】添加 Go 编译优化参数
-GO_PKG_VARS:=GOGC=40 CGO_ENABLED=0
-
-include $(INCLUDE_DIR)/package.mk
-include $(TOPDIR)/feeds/packages/lang/golang/golang-package.mk
-
-define Package/sing-box
-  TITLE:=The universal proxy platform
-  SECTION:=net
-  CATEGORY:=Network
-  URL:=https://sing-box.sagernet.org
-  DEPENDS:=$(GO_ARCH_DEPENDS) +ca-bundle +kmod-tun
-  USERID:=sing-box=5566:sing-box=5566
-  PROVIDES:=sing-box
-endef
-
-define Package/sing-box/description
-  Sing-box is a universal proxy platform.
-endef
-
-# 【修复】配置菜单选项
-define Package/sing-box/config
-  menu "Select build options"
-    depends on PACKAGE_sing-box
-    config SINGBOX_WITH_TAILSCALE
-      bool "Build with Tailscale support"
-      default y
-    config SINGBOX_WITH_QUIC
-      bool "Build with QUIC support"
-      default y
-    config SINGBOX_WITH_WIREGUARD
-      bool "Build with WireGuard support"
-      default y
-    config SINGBOX_WITH_GVISOR
-      bool "Build with gVisor support"
-      default y
-    config SINGBOX_WITH_UTLS
-      bool "Build with uTLS support"
-      default y
-    config SINGBOX_WITH_CLASH_API
-      bool "Build with Clash API support"
-      default y
-  endmenu
-endef
-
-PKG_CONFIG_DEPENDS:= \
-  CONFIG_SINGBOX_WITH_TAILSCALE \
-  CONFIG_SINGBOX_WITH_QUIC \
-  CONFIG_SINGBOX_WITH_WIREGUARD \
-  CONFIG_SINGBOX_WITH_GVISOR \
-  CONFIG_SINGBOX_WITH_UTLS \
-  CONFIG_SINGBOX_WITH_CLASH_API
-
-# 【修复】构建标签（依据配置生成）
-GO_PKG_TAGS:=$(subst $(space),$(comma),$(strip \
-  $(if $(CONFIG_SINGBOX_WITH_QUIC),with_quic) \
-  $(if $(CONFIG_SINGBOX_WITH_UTLS),with_utls) \
-  $(if $(CONFIG_SINGBOX_WITH_CLASH_API),with_clash_api) \
-  $(if $(CONFIG_SINGBOX_WITH_GVISOR),with_gvisor) \
-  $(if $(CONFIG_SINGBOX_WITH_WIREGUARD),with_wireguard) \
-  $(if $(CONFIG_SINGBOX_WITH_TAILSCALE),with_tailscale) \
-))
-
-define Package/sing-box/install
-	$(INSTALL_DIR) $(1)/usr/bin
-	$(INSTALL_BIN) $(GO_PKG_BUILD_BIN_DIR)/sing-box $(1)/usr/bin/sing-box
-	
-	# 【新增】安装配置目录
-	$(INSTALL_DIR) $(1)/etc/sing-box
-endef
-
-define Package/sing-box/postinst
-#!/bin/sh
-# 创建 sing-box 用户和组
-useradd -r -s /bin/false -d /dev/null sing-box 2>/dev/null || true
-chown -R sing-box:sing-box /etc/sing-box 2>/dev/null || true
-exit 0
-endef
-
-$(eval $(call BuildPackage,sing-box))
-MAKEFILE_EOF
-
-echo "✓ sing-box Makefile 已创建"
-
-# =====================================================================
-# 创建 sing-box 配置目录结构
-# =====================================================================
-mkdir -p package/custom/sing-box/files/etc/sing-box
-mkdir -p package/custom/sing-box/files/etc/init.d
-
-# 创建初始化脚本
-cat > package/custom/sing-box/files/etc/init.d/sing-box << 'INIT_EOF'
-#!/bin/sh /etc/rc.common
-
-START=90
-STOP=10
-
-USE_PROCD=1
-PROG=/usr/bin/sing-box
-CONF=/etc/sing-box/config.json
-
-start_service() {
-    procd_open_instance
-    procd_set_param command $PROG run -c $CONF
-    procd_set_param user sing-box
-    procd_set_param respawn 3600 5 0
-    procd_close_instance
-}
-
-stop_service() {
-    killall sing-box 2>/dev/null || true
-}
-INIT_EOF
-
-chmod +x package/custom/sing-box/files/etc/init.d/sing-box
-echo "✓ sing-box init 脚本已创建"
-
-# =====================================================================
-# 环境变量优化（加快编译速度）
-# =====================================================================
-export GOPROXY="https://proxy.golang.org,direct"
-export GOFLAGS="-p=4"
-export GOGC=50
-
-echo "✓ Go 编译环境已优化 (GOGC=50, GOFLAGS=-p=4)"
-
-# =====================================================================
-# 清理可能冲突的旧包
-# =====================================================================
-echo "=== 清理可能冲突的旧包 ==="
-
-# 移除可能存在的冲突包
-rm -rf feeds/packages/net/sing-box
-rm -rf feeds/telephony
-rm -rf feeds/oldpackages
-
-echo "✓ 旧包清理完成"
-
-# =====================================================================
-# 修复 feeds 路径（双保险）
-# =====================================================================
-echo "=== 修复第三方包 Golang 路径 ==="
-
-# 预防性修复（在 Feeds 更新前）
-find . -name "Makefile" -type f 2>/dev/null | head -20 | \
-  xargs sed -i 's#include.*lang/golang/golang-package.mk#include $(TOPDIR)/feeds/packages/lang/golang/golang-package.mk#g'
-
-echo "✓ Golang 包路径预防性修复完成"
-
-# =====================================================================
-# 显示脚本执行完成信息
-# =====================================================================
-echo ""
-echo "=================================="
-echo "✅ diy-part1.sh 执行完成！"
-echo "=================================="
-echo "已完成操作："
-echo "  ✓ 创建 sing-box 1.12.5 自定义包"
-echo "  ✓ 配置 Makefile 和 init 脚本"
-echo "  ✓ 优化 Go 编译环境"
-echo "  ✓ 清理冲突包"
-echo "  ✓ 预防性修复 Golang 路径"
-echo ""
-echo "下一步: 执行 feeds update/install"
-echo "=================================="
+echo "=== DIY 脚本执行完成 ==="
