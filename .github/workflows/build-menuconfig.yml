@@ -115,26 +115,38 @@ jobs:
     - name: 加载自定义配置与 DIY 脚本
       run: |
         cd openwrt
-        # 加载自定义 .config（如果存在）
+        
+        # 复制自定义配置文件（如果存在）
         [ -e $GITHUB_WORKSPACE/$CONFIG_FILE ] && cp $GITHUB_WORKSPACE/$CONFIG_FILE .config
-
-        # 先生成/刷新配置
+        
+        # 强制确保 x86_64 架构配置（防止因配置文件不完整导致架构错误）
+        echo "CONFIG_TARGET_x86_64=y" >> .config
+        echo "CONFIG_TARGET_x86_64_DEVICE_generic=y" >> .config
+        
+        # 生成/刷新配置
         make defconfig
-
-        # 执行 DIY 脚本（现在 .config 已存在，不会报错）
+        
+        # 立即校验架构
+        if ! grep -q "CONFIG_TARGET_x86_64=y" .config; then
+            echo "❌ 架构配置失败，无法继续"
+            exit 1
+        fi
+        echo "✓ 架构确认：x86_64"
+        
+        # 执行 DIY 脚本（此时 .config 已包含正确架构，不会触发脚本内的 exit 1）
         chmod +x $GITHUB_WORKSPACE/$DIY_P1_SH $GITHUB_WORKSPACE/$DIY_P2_SH
         $GITHUB_WORKSPACE/$DIY_P1_SH
         $GITHUB_WORKSPACE/$DIY_P2_SH
-
+        
         # 最终刷新配置
         make defconfig
-
-        # 强制校验
+        
+        # 最终校验
         if [ ! -f .config ]; then 
-          echo "❌ .config 未生成"; exit 1; 
+          echo "❌ .config 未生成"; exit 1
         fi
-        grep -q "CONFIG_TARGET_x86_64=y" .config || { echo "❌ 架构校验失败"; exit 1; }
-
+        grep -q "CONFIG_TARGET_x86_64=y" .config || { echo "❌ 最终架构校验失败"; exit 1; }
+        
         echo "✅ 配置加载与 DIY 脚本执行完成"
 
     - name: 下载编译依赖包
