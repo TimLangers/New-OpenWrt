@@ -99,7 +99,12 @@ jobs:
 
     - name: 复制 feeds 配置
       run: |
-        [ -e $FEEDS_CONF ] && cp $FEEDS_CONF openwrt/feeds.conf.default
+        # 从 New-OpenWrt 子目录复制 feeds 配置文件（如果存在）
+        if [ -e "New-OpenWrt/$FEEDS_CONF" ]; then
+            cp "New-OpenWrt/$FEEDS_CONF" openwrt/feeds.conf.default
+        else
+            echo "警告: New-OpenWrt/$FEEDS_CONF 不存在，跳过复制"
+        fi
 
     - name: 更新 & 安装 feeds
       run: |
