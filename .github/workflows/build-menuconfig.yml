@@ -73,11 +73,10 @@ jobs:
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
 
-    - name: 发送编译开始通知（含服务器信息）
+    - name: 发送编译开始通知
       run: |
         read -r -d '' MSG << EOF || true
         🚀 *OpenWrt 编译开始* 🚀
-
         📅 *时间*：$(date '+%Y-%m-%d %H:%M:%S')
         📦 *仓库名称*：${{ github.repository }}
         🖥️ *编译服务器信息*：
@@ -86,32 +85,16 @@ jobs:
           • 核心数：${{ env.CPU_CORES }}
           • 内存：${{ env.MEM_INFO }}
           • 磁盘使用：$(df -h / | awk 'NR==2 {print $4}') 可用
-
         📦 *配置文件*：${{ env.CONFIG_FILE }}
         🔧 *源码分支*：${{ env.REPO_BRANCH }}
-
-        编译进行中，请稍候...
         EOF
-
-        JSON_PAYLOAD=$(jq -n \
-          --arg chat_id "${{ secrets.TELEGRAM_CHAT_ID }}" \
-          --arg text "$MSG" \
-          --argjson preview false \
-          '{
-            chat_id: $chat_id, 
-            text: $text, 
-            parse_mode: "Markdown", 
-            disable_web_page_preview: $preview
-          }')
-
         curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
           -H "Content-Type: application/json" \
-          -d "$JSON_PAYLOAD"
+          -d "{\"chat_id\": \"${{ secrets.TELEGRAM_CHAT_ID }}\", \"text\": \"$MSG\", \"parse_mode\": \"Markdown\"}"
 
     - name: 克隆固件源码
       working-directory: /workdir
       run: |
-        df -hT $PWD
         git clone $REPO_URL -b $REPO_BRANCH openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
@@ -135,16 +118,14 @@ jobs:
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
         make defconfig
-        # 【架构完整性保护：强制校验 x86_64】
-        echo "=== 校验架构配置 ==="
-        grep -q "CONFIG_TARGET_x86_64=y" .config || { echo "❌ 严重错误：架构回退或丢失，已中断编译！" ; exit 1; }
+        # 强制校验：确保 .config 存在且包含正确的架构定义
+        if [ ! -f .config ]; then echo "❌ .config 未生成"; exit 1; fi
+        grep -q "CONFIG_TARGET_x86_64=y" .config || { echo "❌ 架构校验失败"; exit 1; }
 
     - name: 下载编译依赖包
-      id: package
       run: |
         cd openwrt
         make download -j8
-        find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
     - name: 编译固件
@@ -152,50 +133,19 @@ jobs:
       run: |
         cd openwrt
         echo "FILE_DATE=$(date +%Y%m%d%H%M)" >> $GITHUB_ENV
-        echo -e "$(nproc) 线程快速编译中..."
-        if ! make -j$(nproc); then
-          echo "⚠️ 多线程编译失败，正在尝试单线程 V=s 捕获核心错误..."
-          make -j1 V=s
-        fi
+        make -j$(nproc) || make -j1 V=s
 
     - name: 发送编译结果通知 (Telegram)
       if: always()
-      env:
-        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: |
-        if [ -f openwrt/.config ]; then
-          DEVICE=$(grep '^CONFIG_TARGET.*DEVICE.*=y' openwrt/.config | sed -r 's/.*DEVICE_(.*)=y/\1/')
-          [ -z "$DEVICE" ] && DEVICE="未知设备"
-        else
-          DEVICE="未知设备"
-        fi
-
         if [ "${{ job.status }}" = "success" ]; then
-          FILE_DATE="${{ env.FILE_DATE }}"
-          RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/OpenWrt_${FILE_DATE}"
-          MSG=$(printf "✅ <b>OpenWrt 自动编译成功！</b> ✅\n\n📅 <b>完成时间</b>：%s\n📟 <b>目标设备</b>：%s\n📦 <b>项目仓库</b>：%s\n🌐 <b>管理地址</b>：10.1.1.1\n🔑 <b>默认密码</b>：无\n\n🔗 <a href=\"%s\">点击直达下载发布页面</a>\n⚠️ <a href=\"%s\">点击查看详细编译日志</a>" "$(date '+%Y-%m-%d %H:%M:%S')" "$DEVICE" "${{ github.repository }}" "$RELEASE_URL" "$RUN_URL")
+          MSG="✅ *OpenWrt 编译成功* ✅\n[下载地址](https://github.com/${{ github.repository }}/releases/tag/OpenWrt_${{ env.FILE_DATE }})"
         else
-          MSG=$(printf "❌ <b>OpenWrt 自动编译失败！</b> ❌\n\n📅 <b>失败时间</b>：%s\n📟 <b>目标设备</b>：%s\n📦 <b>项目仓库</b>：%s\n🔧 <b>失败分支</b>：%s\n\n⚠️ <a href=\"%s\">点击此处紧急查看错误日志</a>" "$(date '+%Y-%m-%d %H:%M:%S')" "$DEVICE" "${{ github.repository }}" "${{ env.REPO_BRANCH }}" "$RUN_URL")
+          MSG="❌ *OpenWrt 编译失败* ❌\n查看日志: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
         fi
-
-        JSON_PAYLOAD=$(jq -n \
-          --arg chat_id "${TELEGRAM_CHAT_ID}" \
-          --arg text "$MSG" \
-          --argjson preview true \
-          '{
-            chat_id: $chat_id, 
-            text: $text, 
-            parse_mode: "HTML", 
-            disable_web_page_preview: $preview
-          }')
-
-        RESPONSE=$(curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+        curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
           -H "Content-Type: application/json" \
-          -d "$JSON_PAYLOAD")
-
-        echo "TG API Response: $RESPONSE"
+          -d "{\"chat_id\": \"${{ secrets.TELEGRAM_CHAT_ID }}\", \"text\": \"$MSG\", \"parse_mode\": \"Markdown\"}"
 
     - name: 上传固件到 Releases
       uses: softprops/action-gh-release@v1
@@ -203,13 +153,4 @@ jobs:
       with:
         tag_name: OpenWrt_${{ env.FILE_DATE }}
         name: OpenWrt 自动编译 ${{ env.FILE_DATE }}
-        body: |
-          自动编译完成于 ${{ env.FILE_DATE }}
-          设备配置：${{ env.CONFIG_FILE }}
-          源码分支：${{ env.REPO_BRANCH }}
-        files: |
-          openwrt/bin/targets/**/*.img
-          openwrt/bin/targets/**/*.bin
-          openwrt/bin/targets/**/*.gz
-          openwrt/bin/targets/**/*.tar
-      continue-on-error: true
+        files: openwrt/bin/targets/**/*.img
