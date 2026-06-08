@@ -119,15 +119,21 @@ jobs:
         # 复制自定义配置文件（如果存在）
         [ -e $GITHUB_WORKSPACE/$CONFIG_FILE ] && cp $GITHUB_WORKSPACE/$CONFIG_FILE .config
         
-        # 强制确保 x86_64 架构配置（防止因配置文件不完整导致架构错误）
-        echo "CONFIG_TARGET_x86_64=y" >> .config
-        echo "CONFIG_TARGET_x86_64_DEVICE_generic=y" >> .config
+        # 第一次生成配置，确保 scripts/config 工具可用
+        make defconfig
         
-        # 生成/刷新配置
+        # 强制设置 x86_64 架构（使用 scripts/config 工具，更可靠）
+        ./scripts/config --set-val CONFIG_TARGET_x86 y
+        ./scripts/config --set-val CONFIG_TARGET_x86_64 y
+        ./scripts/config --set-val CONFIG_TARGET_x86_64_DEVICE_generic y
+        
+        # 再次生成配置，让依赖关系正确
         make defconfig
         
         # 立即校验架构
         if ! grep -q "CONFIG_TARGET_x86_64=y" .config; then
+            echo "当前 .config 中的目标配置:"
+            grep "CONFIG_TARGET_" .config | head -20
             echo "❌ 架构配置失败，无法继续"
             exit 1
         fi
