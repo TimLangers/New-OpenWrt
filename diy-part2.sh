@@ -1,4 +1,5 @@
 #!/bin/bash
+# File: diy-part2.sh
 # Description: OpenWrt DIY script part 2
 
 set -e
