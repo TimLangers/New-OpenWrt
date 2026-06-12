@@ -1,4 +1,5 @@
 #!/bin/bash
+# File: diy-part1.sh
 # Description: OpenWrt DIY script part 1 (Clean & Optimized)
 set -e
 
