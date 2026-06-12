@@ -31,10 +31,11 @@ if [ -f "package/custom/sing-box/Makefile" ]; then
     sed -i '/^GO_PKG_LDFLAGS_X/a GO_PKG_VARS:=GOGC=50 CGO_ENABLED=0' package/custom/sing-box/Makefile
 fi
 
-# 5. 防火墙与 LuCI 修复 + 清理
+# 5. 防火墙与 LuCI 修复（保留 Argon 主题）
 sed -i 's/"iptables"/"iptables-nft"/g' feeds/luci/modules/luci-base/root/usr/share/rpcd/acl.d/luci-base.json 2>/dev/null || true
-rm -rf feeds/luci/themes/luci-theme-argon
-rm -rf feeds/luci/applications/luci-app-argon-config
+# 注释掉删除 Argon 主题的代码，确保 Argon 主题能被编译
+# rm -rf feeds/luci/themes/luci-theme-argon
+# rm -rf feeds/luci/applications/luci-app-argon-config
 
 # 6. uci-defaults 设置
 mkdir -p package/base-files/files/etc/uci-defaults
