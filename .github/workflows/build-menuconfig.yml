@@ -9,7 +9,7 @@ env:
   REPO_URL: https://github.com/openwrt/openwrt.git
   REPO_BRANCH: openwrt-25.12
   FEEDS_CONF: feeds.conf.default
-  CONFIG_FILE: OK2.config
+  CONFIG_FILE: OK2.config          # 保留变量但不再使用，实际使用根目录 .config
   DIY_P1_SH: diy-part1.sh
   DIY_P2_SH: diy-part2.sh
   UPLOAD_FIRMWARE: true
@@ -116,51 +116,45 @@ jobs:
       run: |
         cd openwrt
         
-        # 复制自定义配置文件（如果存在）
-        [ -e $GITHUB_WORKSPACE/$CONFIG_FILE ] && cp $GITHUB_WORKSPACE/$CONFIG_FILE .config
+        # 直接使用仓库根目录下的 .config（x86_64 配置）
+        if [ -e $GITHUB_WORKSPACE/.config ]; then
+            cp $GITHUB_WORKSPACE/.config .config
+            echo "✅ 已从仓库根目录复制 .config (x86_64)"
+        else
+            echo "❌ 未找到根目录的 .config，尝试使用 OK2.config"
+            [ -e $GITHUB_WORKSPACE/$CONFIG_FILE ] && cp $GITHUB_WORKSPACE/$CONFIG_FILE .config
+        fi
         
-        # 第一次生成配置，确保 .config 存在
+        # 生成完整配置（基于已有的 .config）
         make defconfig
         
-        # 强制设置 x86_64 架构：直接修改 .config 文件
-        # 先删除可能存在的其他 TARGET 配置
-        sed -i '/^CONFIG_TARGET_/d' .config
-        # 添加 x86_64 架构配置
-        cat >> .config <<EOF
-CONFIG_TARGET_x86=y
-CONFIG_TARGET_x86_64=y
-CONFIG_TARGET_x86_64_DEVICE_generic=y
-CONFIG_TARGET_IMAGES_GZIP=y
-CONFIG_TARGET_KERNEL_PARTSIZE=256
-CONFIG_TARGET_ROOTFS_PARTSIZE=2048
-EOF
-        
-        # 再次生成配置，让依赖关系正确（会保留我们手动添加的配置）
-        make defconfig
-        
-        # 立即校验架构
+        # 立即校验架构是否为 x86_64
         if ! grep -q "CONFIG_TARGET_x86_64=y" .config; then
             echo "当前 .config 中的目标配置:"
             grep "CONFIG_TARGET_" .config | head -20
-            echo "❌ 架构配置失败，无法继续"
+            echo "❌ 架构配置失败，不是 x86_64，无法继续"
             exit 1
         fi
-        echo "✓ 架构确认：x86_64"
+        echo "✓ 初始架构确认：x86_64"
         
-        # 执行 DIY 脚本（此时 .config 已包含正确架构，不会触发脚本内的 exit 1）
+        # 执行 DIY 脚本（注意：脚本内不应包含覆盖架构的命令）
         chmod +x $GITHUB_WORKSPACE/$DIY_P1_SH $GITHUB_WORKSPACE/$DIY_P2_SH
         $GITHUB_WORKSPACE/$DIY_P1_SH
         $GITHUB_WORKSPACE/$DIY_P2_SH
         
-        # 最终刷新配置
+        # 最终刷新配置（确保依赖正确）
         make defconfig
         
-        # 最终校验
+        # 最终校验架构
         if [ ! -f .config ]; then 
           echo "❌ .config 未生成"; exit 1
         fi
-        grep -q "CONFIG_TARGET_x86_64=y" .config || { echo "❌ 最终架构校验失败"; exit 1; }
-        
+        if ! grep -q "CONFIG_TARGET_x86_64=y" .config; then
+            echo "❌ 最终架构校验失败：配置被修改为非 x86_64"
+            grep "CONFIG_TARGET_" .config | head -20
+            exit 1
+        fi
+        echo "✅ 最终架构确认：x86_64"
         echo "✅ 配置加载与 DIY 脚本执行完成"
 
     - name: 下载编译依赖包
