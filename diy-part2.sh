@@ -1,10 +1,17 @@
 #!/bin/bash
-# File: diy-part2.sh
-# Description: OpenWrt DIY script part 2
+# 在此处执行你之前写在 part1 里的修改逻辑
+# 1. 架构校验 (可以保留)
+if ! grep -q "CONFIG_TARGET_x86_64=y" .config; then exit 1; fi
 
-set -e
-echo "=== 正在执行 DIY 优化脚本 part2 ==="
+# 2. 修改 IP 和 主机名
+sed -i 's/192.168.1.1/10.1.1.1/g' package/base-files/files/bin/config_generate
 
-# 这里可以放一些 part1 之后需要执行的操作，目前你的 part2 内容较少，可按需添加
-
-echo "=== DIY part2 脚本执行完成 ==="
+# 3. 写入 uci-defaults
+mkdir -p package/base-files/files/etc/uci-defaults
+cat > package/base-files/files/etc/uci-defaults/99-custom-settings << 'EOF'
+#!/bin/sh
+uci set network.lan.ipaddr='10.1.1.1'
+uci set system.@system[0].hostname='OpenWrt'
+uci commit network
+EOF
+chmod +x package/base-files/files/etc/uci-defaults/99-custom-settings
