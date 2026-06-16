@@ -15,3 +15,9 @@ uci set system.@system[0].hostname='OpenWrt'
 uci commit network
 EOF
 chmod +x package/base-files/files/etc/uci-defaults/99-custom-settings
+# 强制设置默认主题为 argon
+sed -i 's/luci.main.mediaurlbase=\/luci-static\/bootstrap/luci.main.mediaurlbase=\/luci-static\/argon/g' feeds/luci/modules/luci-mod-admin-full/root/etc/uci-defaults/luci-mod-admin
+# 或者更直接的通过 uci-defaults 强制修改
+echo "uci set luci.main.lang=zh_hans" >> package/base-files/files/etc/uci-defaults/99-custom-settings
+echo "uci set luci.themes.Argon=argon" >> package/base-files/files/etc/uci-defaults/99-custom-settings
+echo "uci set luci.main.mediaurlbase=/luci-static/argon" >> package/base-files/files/etc/uci-defaults/99-custom-settings
